@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { getTrack } from '../src/circuit';
 import { MAX_BOOST_SPEED, type Pose } from '../src/drive';
+import { newDriverId } from '../src/driver-id';
 import { decodeGhost, encodeGhost, ghostPose, ghostTimeAt, GHOST_INTERVAL, MAX_LAP_MS } from '../src/ghost';
 import { TimeTrial } from '../src/time-trial';
 import { TRACK_IDS } from '../src/tracks';
@@ -44,6 +45,11 @@ test('every track produces a server-valid flying lap with the real driving model
       ...replay, name: 'Driver', driverId: uuid,
     }, id);
   }
+});
+
+test('a time trial can submit a UUID generated without crypto.randomUUID', () => {
+  const driverId = newDriverId({ getRandomValues: crypto.getRandomValues.bind(crypto) });
+  assert.ok(validSubmission({ ...runLap(), name: 'LAN Driver', driverId }, TRACK_IDS[0]));
 });
 
 test('stalled runs time out without a replay', () => {

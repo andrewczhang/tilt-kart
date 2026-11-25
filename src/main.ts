@@ -6,6 +6,7 @@ import { Controls } from './controls';
 import { cupItinerary, cupSelector, fillCupResults } from './cup-ui';
 import { CUPS, CUP_IDS, cupTrack, isCupId, newCup, nextRound, type Cup } from './cups';
 import { drive, grid, pose, type Kart, type Pose } from './drive';
+import { newDriverId } from './driver-id';
 import { decodeGhost, ghostPose, ghostTimeAt, type Ghost, type Replay, type Standing } from './ghost';
 import { RaceMusic } from './music';
 import { POWERUPS, PowerupState, type ItemEvent, type PowerupCallbacks, type PowerupId } from './powerups';
@@ -567,7 +568,7 @@ function trialResults(attempt: Trial) {
   const status = $('result-status');
   status.textContent = 'Posting your best lap…';
   const key = 'tilt-kart-trial-driver';
-  trialDriverId ??= readPreference(key) || crypto.randomUUID();
+  trialDriverId ??= readPreference(key) || newDriverId();
   writePreference(key, trialDriverId);
   void trialRequest<{ rank: number; lapMs: number }>(trialUrl(race.track.id), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
