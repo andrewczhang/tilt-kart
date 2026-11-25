@@ -70,7 +70,7 @@ test('space activates menu buttons but brakes during a race regardless of focus'
     HTMLInputElement: { configurable: true, value: InputField }
   }, () => {
     let racing = false;
-    const controls = new Controls(() => {}, () => racing);
+    const controls = new Controls(() => racing);
     const space = (type: string, target: object) => {
       const event = new Event(type, { cancelable: true });
       Object.defineProperties(event, { key: { value: ' ' }, target: { value: target } });
@@ -92,36 +92,32 @@ test('space activates menu buttons but brakes during a race regardless of focus'
   });
 });
 
-test('tilt waits for sensor data, reports denial or absence, and recovers on late data', async () => {
+test('phone buttons steer and brake together without motion data', () => {
   const events = new EventTarget();
-  let timeout = () => {};
-  const window = {
-    DeviceOrientationEvent: { requestPermission: async () => 'denied' },
-    setTimeout: (fn: () => void) => { timeout = fn; return 1; },
-    clearTimeout: () => { timeout = () => {}; },
-  };
-  await withAsyncGlobals({
-    window: { configurable: true, value: window },
-    screen: { configurable: true, value: { orientation: { angle: 90 } } },
+  const button = () => Object.assign(new EventTarget(), { setPointerCapture: () => {} });
+  const buttons = { left: button(), right: button(), brake: button() };
+  const press = (id: keyof typeof buttons, type: string, pointerId: number) =>
+    buttons[id].dispatchEvent(Object.assign(new Event(type, { cancelable: true }), { pointerId }));
+  withGlobals({
+    document: { configurable: true, value: { getElementById: (id: keyof typeof buttons) => buttons[id] } },
     addEventListener: { configurable: true, value: events.addEventListener.bind(events) },
     matchMedia: { configurable: true, value: () => ({ matches: true }) },
-  }, async () => {
-    const controls = new Controls(() => {}, () => false);
-    await controls.enableTilt();
-    assert.equal(controls.tiltStatus, 'denied');
-    window.DeviceOrientationEvent.requestPermission = async () => 'granted';
-    await controls.enableTilt();
-    assert.equal(controls.tiltStatus, 'waiting');
-    timeout();
-    assert.equal(controls.tiltStatus, 'unavailable');
-    const orientation = (beta: number | null) => events.dispatchEvent(Object.assign(new Event('deviceorientation'), { beta, gamma: 0 }));
-    orientation(null);
-    assert.equal(controls.tiltStatus, 'unavailable');
-    orientation(8);
-    assert.equal(controls.tiltStatus, 'ready');
-    assert.equal(controls.input().steer, -0);
-    orientation(35);
-    assert.ok(controls.input().steer < 0);
+  }, () => {
+    const controls = new Controls(() => true);
+    controls.bindTouch();
+    assert.deepEqual(controls.input(), { steer: 0, brake: false, gas: true });
+    events.dispatchEvent(Object.assign(new Event('deviceorientation'), { beta: 40, gamma: 40 }));
+    assert.equal(controls.input().steer, 0);
+    assert.equal(press('left', 'pointerdown', 1), false);
+    press('brake', 'pointerdown', 2);
+    assert.deepEqual(controls.input(), { steer: 1, brake: true, gas: true });
+    press('left', 'pointerup', 1);
+    press('right', 'pointerdown', 3);
+    assert.deepEqual(controls.input(), { steer: -1, brake: true, gas: true });
+    press('right', 'pointercancel', 3);
+    assert.deepEqual(controls.input(), { steer: 0, brake: true, gas: true });
+    press('brake', 'lostpointercapture', 2);
+    assert.deepEqual(controls.input(), { steer: 0, brake: false, gas: true });
   });
 });
 
