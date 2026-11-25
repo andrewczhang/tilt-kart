@@ -1,6 +1,6 @@
 import './style.css';
 import { Motor } from './audio';
-import { LocalRace, MAX_RACERS } from './bots';
+import { DIFFICULTIES, LocalRace, MAX_RACERS, type Difficulty } from './bots';
 import { COLORS, COUNTDOWN, LAPS, LIMIT, clamp, getTrack } from './circuit';
 import { Controls } from './controls';
 import { cupItinerary, cupSelector, fillCupResults } from './cup-ui';
@@ -66,9 +66,9 @@ function bindTilt() {
   updateTilt();
 }
 
-function prepareLocal(racers: number, back: () => void, cup?: Cup) {
+function prepareLocal(racers: number, back: () => void, cup?: Cup, difficulty?: Difficulty) {
   motor.start();
-  if (!touch.touch) { startLocal(racers, cup); return; }
+  if (!touch.touch) { startLocal(racers, cup, difficulty); return; }
   screen = 'controls';
   show(`<section class="poster compact">${identity}<h2 class="title">Phone controls</h2>
     ${phoneSetup()}
@@ -76,7 +76,7 @@ function prepareLocal(racers: number, back: () => void, cup?: Cup) {
     <div class="actions">${button('start', cup ? 'Start cup' : 'Start race')}${button('back', 'Back', true)}</div>
     </section>${trackTag(track)}`);
   bindTilt();
-  doOn('start', () => { motor.start(); startLocal(racers, cup); });
+  doOn('start', () => { motor.start(); startLocal(racers, cup, difficulty); });
   doOn('back', back);
 }
 
@@ -125,10 +125,12 @@ function menu() {
       const racers = i + 2;
       return `<option value="${racers}"${racers === 6 ? ' selected' : ''}>${racers} (you + ${racers - 1} ${racers === 2 ? 'bot' : 'bots'})</option>`;
     }).join('');
+    const difficulties = DIFFICULTIES.map(level => `<option${level === 'Normal' ? ' selected' : ''}>${level}</option>`).join('');
     show(`<section class="poster compact">${identity}<h2 class="title">${gp ? 'Grand Prix' : 'Vs bots'}</h2>
       <form class="setup" id="bot-setup">
       ${gp ? `${cupSelector()}<div id="cup-route">${cupItinerary(CUP_IDS[0])}</div>` : ''}
       <label for="racers">Total racers</label><select id="racers" name="racers">${options}</select>
+      ${gp ? '' : `<label for="difficulty">Difficulty</label><select id="difficulty" name="difficulty">${difficulties}</select>`}
       <div class="actions"><button class="action" type="submit">${touch.touch ? 'Phone controls' : gp ? 'Start cup' : 'Start race'}</button>${button('back', 'Back', true)}</div></form>
       <p class="help">${gp ? 'Finish each race to score points. In a room, the host can choose a cup for everyone.' : notes()}</p></section>${trackTag(track)}`);
     const setup = $<HTMLFormElement>('bot-setup');
@@ -141,9 +143,12 @@ function menu() {
     };
     setup.onsubmit = e => {
       e.preventDefault();
-      const racers = Number(new FormData(setup).get('racers'));
+      const data = new FormData(setup);
+      const racers = Number(data.get('racers'));
+      const difficulty = DIFFICULTIES.find(level => level === data.get('difficulty'));
       const selected = picker?.value;
-      prepareLocal(racers, () => { screen = gp ? 'grand-prix' : 'bots'; menu(); }, selected && isCupId(selected) ? newCup(selected) : undefined);
+      const cup = selected && isCupId(selected) ? newCup(selected) : undefined;
+      prepareLocal(racers, () => { screen = gp ? 'grand-prix' : 'bots'; menu(); }, cup, difficulty);
     };
     doOn('back', home);
     return;
@@ -419,9 +424,9 @@ function receiveRoom(next: RoomState) {
   }
 }
 
-function startLocal(racers: number, cup?: Cup) {
+function startLocal(racers: number, cup?: Cup, difficulty?: Difficulty) {
   close();
-  localRace = new LocalRace(racers, Date.now() + COUNTDOWN, getTrack(practiceTrack), cup);
+  localRace = new LocalRace(racers, Date.now() + COUNTDOWN, getTrack(practiceTrack), cup, difficulty);
   player = localRace.human.id;
   clock = 0;
   room = localRace.room;
@@ -599,8 +604,9 @@ function results() {
     return;
   }
   const racers = localRace?.racers;
+  const difficulty = localRace?.difficulty;
   const retry = room?.cup ? '' : racers ? 'Race again' : room?.host === player ? 'Rematch' : '';
-  show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet"><p class="identity">Tilt Kart / ${track.name}</p>
+  show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet"><p class="identity">Tilt Kart / ${track.name}${racers && racers > 1 && !room?.cup ? ` / ${difficulty}` : ''}</p>
     <h2 class="title" id="result-title">${racers === 1 ? 'Practice results' : 'Race results'}</h2>
     ${me ? `<p class="finish-time"><small>Your result</small><strong>${time}</strong></p>${splitsAndRecords}` : ''}
     <ol class="list" id="results-list"></ol><p id="result-status"></p>
@@ -608,7 +614,7 @@ function results() {
     </div></section>`);
   updateResults();
   doOn('back', home);
-  if (retry) doOn('retry', () => racers ? prepareLocal(racers, results) : socket?.send('rematch'));
+  if (retry) doOn('retry', () => racers ? prepareLocal(racers, results, undefined, difficulty) : socket?.send('rematch'));
 }
 
 function cupResults(cup: Cup, timingDetails: string) {
