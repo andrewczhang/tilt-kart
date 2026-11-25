@@ -640,14 +640,16 @@ function cupResults(cup: Cup, timingDetails: string) {
   const canContinue = Boolean(racers || room?.host === player);
   const continueLabel = next ? `Next: ${getTrack(cupTrack(next)).name}` : racers ? 'Race cup again' : 'Back to lobby';
   show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet cup-sheet">
-    <p class="identity">${event.name} / Race ${cup.round + 1} of ${event.tracks.length}</p>
-    <h2 class="title" id="result-title">${next ? 'Cup standings' : 'Cup podium'}</h2>
-    ${next ? `<p>${track.name} complete · Next: ${getTrack(cupTrack(next)).name}</p>` : '<ol class="cup-podium" id="cup-podium" aria-label="Top finishers"></ol>'}
-    <table class="cup-table" id="cup-table" aria-label="${event.name} points"><thead><tr><th scope="col">Driver</th>
-    ${cup.results.map((_, i) => `<th scope="col" title="${getTrack(event.tracks[i]).name}">R${i + 1}</th>`).join('')}
-    <th scope="col">Total</th></tr></thead><tbody></tbody></table>
-    ${timingDetails}
-    ${canContinue ? '' : `<p class="cup-wait" role="status">Waiting for the host to ${next ? 'start the next race' : 'return to the lobby'}.</p>`}
+    <div class="cup-content" role="region" aria-labelledby="result-title" tabindex="0">
+      <p class="identity">${event.name} / Race ${cup.round + 1} of ${event.tracks.length}</p>
+      <h2 class="title" id="result-title">${next ? 'Cup standings' : 'Cup podium'}</h2>
+      ${next ? `<p>${track.name} complete · Next: ${getTrack(cupTrack(next)).name}</p>` : '<ol class="cup-podium" id="cup-podium" aria-label="Top finishers"></ol>'}
+      <table class="cup-table" id="cup-table" aria-label="${event.name} points"><thead><tr><th scope="col">Driver</th>
+      ${cup.results.map((_, i) => `<th scope="col" title="${getTrack(event.tracks[i]).name}">R${i + 1}</th>`).join('')}
+      <th scope="col">Total</th></tr></thead><tbody></tbody></table>
+      ${timingDetails}
+      ${canContinue ? '' : `<p class="cup-wait" role="status">Waiting for the host to ${next ? 'start the next race' : 'return to the lobby'}.</p>`}
+    </div>
     <div class="actions">${canContinue ? button('cup-next', continueLabel) : ''}${button('back', 'Main menu', true)}</div>
     </div></section>`);
   fillCupResults(cup, player);

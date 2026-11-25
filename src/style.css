@@ -99,7 +99,9 @@ dialog h2{margin:0}
 .cup-picker{margin-bottom:7px}
 .cup-route{margin:4px 0 7px;padding-left:1.65em;font-size:.88rem;line-height:1.55}
 .cup-route li::marker{font-weight:900}
-.cup-sheet{width:min(100%,620px);background:var(--paper);border-top:7px solid var(--red)}
+.cup-sheet{width:min(100%,620px);display:grid;grid-template-rows:minmax(0,1fr) auto;overflow:hidden;background:var(--paper);border-top:7px solid var(--red)}
+.cup-content{overflow:auto}
+.cup-content:focus-visible{outline:3px solid #197774;outline-offset:-3px}
 .cup-sheet .identity{margin-bottom:15px}
 .cup-table{width:100%;margin:14px 0;border-collapse:collapse;line-height:1.15;font-variant-numeric:tabular-nums;text-align:right}
 .cup-table th,.cup-table td{padding:6px clamp(3px,1vw,10px);border-bottom:1px solid #202b3140}
