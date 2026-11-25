@@ -6,11 +6,13 @@ import { Controls } from './controls';
 import { cupItinerary, cupSelector, fillCupResults } from './cup-ui';
 import { CUPS, CUP_IDS, cupTrack, isCupId, newCup, nextRound, type Cup } from './cups';
 import { drive, grid, pose, type Kart, type Pose } from './drive';
+import { decodeGhost, ghostPose, ghostTimeAt, type Ghost, type Replay, type Standing } from './ghost';
 import { RaceMusic } from './music';
 import { POWERUPS, PowerupState, type ItemEvent, type PowerupCallbacks, type PowerupId } from './powerups';
 import { readPreference, writePreference } from './preferences';
 import { rank, type Driver, type RoomState, type ServerMessage } from './rules';
-import { View } from './scene';
+import { View, type Actor } from './scene';
+import { TimeTrial } from './time-trial';
 import { drawTrackMap, trackSelector, trackTag } from './track-ui';
 import { DEFAULT_TRACK, isTrackId, type TrackId } from './tracks';
 import { formatTime, RaceTiming } from './timing';
@@ -24,13 +26,17 @@ const music = new RaceMusic(() => motor.start(), motor.muted);
 const wake = new RaceWakeLock();
 const route = /^\/r\/([0-9a-z]{8})\/?$/i.exec(location.pathname);
 let code = route?.[1].toUpperCase() ?? '';
-let screen: 'home' | 'bots' | 'grand-prix' | 'controls' | 'join' | 'lobby' | 'race' | 'spectate' | 'results' = code ? 'join' : 'home';
+let screen: 'home' | 'bots' | 'grand-prix' | 'controls' | 'time-trial' | 'join' | 'lobby' | 'race' | 'spectate' | 'results' = code ? 'join' : 'home';
 let socket: WebSocket | undefined;
 let heartbeat = 0, clock = 0, sent = 0;
 let player = '', local = grid(0), room: RoomState | undefined;
 let localRace: LocalRace | undefined;
 let timing = new RaceTiming();
 let timingKey = '';
+type LapGhost = { replay: Replay; decoded: Ghost };
+type Trial = { race: TimeTrial; name: string; personal?: LapGhost; world?: LapGhost };
+let trial: Trial | undefined;
+let trialDriverId: string | undefined;
 let issue = '', starting = false, joining = false;
 let followed = '', checkedDeadline: number | null = null;
 let view: View;
@@ -93,7 +99,7 @@ function menu() {
     show(`<section class="poster">${identity}<h1 class="title">Tilt <span>Kart</span></h1>
       <p class="intro">Eight circuits, three laps each. Send a link to race up to seven friends.</p>
       ${trackSelector(practiceTrack)}
-      <div class="actions">${button('grand-prix', 'Grand Prix')}${button('create', 'Create room')}${button('bots', 'Vs bots', true)}${button('solo', 'Solo practice', true)}</div>
+      <div class="actions">${button('grand-prix', 'Grand Prix')}${button('create', 'Create room')}${button('time-trial', 'Time trial', true)}${button('bots', 'Vs bots', true)}${button('solo', 'Solo practice', true)}</div>
       <p class="help">${notes()}</p></section>${trackTag(track)}`);
     bindTrackPicker(id => {
       practiceTrack = id;
@@ -103,7 +109,12 @@ function menu() {
     doOn('create', () => { screen = 'join'; menu(); });
     doOn('bots', () => { screen = 'bots'; menu(); });
     doOn('grand-prix', () => { screen = 'grand-prix'; menu(); });
+    doOn('time-trial', openTimeTrials);
     doOn('solo', () => prepareLocal(1, home));
+    return;
+  }
+  if (screen === 'time-trial') {
+    showTimeTrials();
     return;
   }
   if (screen === 'bots' || screen === 'grand-prix') {
@@ -189,6 +200,98 @@ function menu() {
   }
 }
 
+function trialKey(id: TrackId) { return `tilt-kart-trial-best-${id}`; }
+function trialUrl(id: TrackId) { return `/api/tt/${id}`; }
+
+function lapGhost(replay: Replay | null): LapGhost | undefined {
+  if (!replay || typeof replay.ghost !== 'string') return;
+  const decoded = decodeGhost(replay.lapMs, replay.ghost);
+  if (decoded) return { replay, decoded };
+}
+
+function personalGhost(id: TrackId) {
+  try { return lapGhost(JSON.parse(readPreference(trialKey(id)) ?? 'null')); } catch { return; }
+}
+
+async function trialRequest<T>(url: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(url, options);
+  if (!res.ok) throw new Error('Time trial request failed');
+  return res.json();
+}
+
+function formatLap(ms: number) {
+  return `${formatTime(ms)}${Math.floor(ms % 10)}`;
+}
+
+function openTimeTrials() {
+  close();
+  screen = 'time-trial';
+  menu();
+}
+
+function showTimeTrials() {
+  displayTrack(practiceTrack);
+  show(`<section class="poster compact trial-poster"><h2 class="title">Time trial</h2>
+    <p class="intro">One flying lap. Chase your best and the world record.</p>
+    <form class="setup" id="trial-setup">${trackSelector(practiceTrack)}
+    <label for="trial-driver">Public driver name</label>
+    <input id="trial-driver" maxlength="20" autocomplete="nickname" required placeholder="Your name">
+    ${phoneSetup()}
+    <div class="actions"><button class="action" id="start" type="submit">Start lap</button>${button('back', 'Back', true)}</div></form>
+    <p class="trial-best" id="personal-best"></p>
+    <section aria-labelledby="board-title"><h3 class="board-title" id="board-title">World leaderboard</h3>
+    <ol class="list" id="standings"></ol><p id="board-message" role="status"></p></section>
+    </section>${trackTag(track)}`);
+  const input = $<HTMLInputElement>('trial-driver');
+  input.value = readPreference('tilt-kart-name') ?? '';
+  const list = $('standings'), message = $('board-message');
+  let request = 0;
+  const loadBoard = async (id: TrackId) => {
+    const current = ++request;
+    const best = personalGhost(id);
+    $('personal-best').textContent = best ? `Personal best · ${formatLap(best.replay.lapMs)}` : 'No personal best yet';
+    list.replaceChildren();
+    message.textContent = 'Loading times…';
+    try {
+      const standings = await trialRequest<Standing[]>(`${trialUrl(id)}/leaderboard`);
+      if (current !== request || !list.isConnected) return;
+      message.textContent = standings.length ? '' : 'No times yet. Set the first one.';
+      standings.forEach(({ name, lapMs }, index) => {
+        const row = document.createElement('li');
+        const place = document.createElement('strong'), driverName = document.createElement('span'), time = document.createElement('small');
+        place.textContent = String(index + 1);
+        driverName.className = 'driver-name';
+        driverName.textContent = name;
+        time.textContent = formatLap(lapMs);
+        row.appendChild(place);
+        row.appendChild(driverName);
+        row.appendChild(time);
+        list.appendChild(row);
+      });
+    } catch {
+      if (current === request && list.isConnected) message.textContent = 'Leaderboard offline. You can still set a personal best.';
+    }
+  };
+  bindTrackPicker(id => {
+    practiceTrack = id;
+    displayTrack(id);
+    $('track-callout').outerHTML = trackTag(track);
+    void loadBoard(id);
+  });
+  $<HTMLFormElement>('trial-setup').onsubmit = e => {
+    e.preventDefault();
+    if (touch.tiltStatus === 'waiting') return;
+    const name = input.value.trim();
+    if (!name) { input.value = ''; input.reportValidity(); return; }
+    writePreference('tilt-kart-name', name);
+    motor.start();
+    startTrial(name);
+  };
+  bindTilt();
+  doOn('back', home);
+  void loadBoard(practiceTrack);
+}
+
 async function share() {
   const url = new URL(`/r/${code}`, location.origin).href;
   try {
@@ -224,6 +327,7 @@ function close() {
   prev?.close();
   room = undefined;
   localRace = undefined;
+  trial = undefined;
   remotes.clear();
   joining = false;
   issue = '';
@@ -323,6 +427,18 @@ function startLocal(racers: number, cup?: Cup) {
   begin();
 }
 
+function startTrial(name: string) {
+  close();
+  const id = practiceTrack;
+  const attempt: Trial = { race: new TimeTrial(getTrack(id), performance.now()), name, personal: personalGhost(id) };
+  trial = attempt;
+  player = 'trial-driver';
+  begin();
+  void trialRequest<Replay | null>(`${trialUrl(id)}/ghost`).then(replay => {
+    if (trial === attempt) attempt.world = lapGhost(replay);
+  }).catch(() => {});
+}
+
 function updateTilt() {
   const tilt = $<HTMLButtonElement>('tilt');
   if (!tilt) return;
@@ -374,19 +490,25 @@ function spectate() {
 function begin() {
   screen = 'race';
   wake.setActive(true);
-  resetRace(room!.drivers.find(d => d.id === player));
+  if (trial) {
+    displayTrack(trial.race.track.id);
+    local = trial.race.kart;
+    starting = true;
+  } else resetRace(room!.drivers.find(d => d.id === player));
   const cup = room?.cup;
   music.start(track.id);
-  show(`<div class="hud" aria-label="Race overview">
-      <div class="hud-box"><small>${cup ? `Race ${cup.round + 1}/${CUPS[cup.id].tracks.length} · Lap` : 'Lap'}</small><em id="lap">1/3</em></div>
-      <div class="hud-box"><small>Place</small><em id="place">1/${room!.drivers.length}</em></div>
+  show(`<div class="hud${trial ? ' trial-hud' : ''}" aria-label="Race overview">
+      ${trial ? `<div class="hud-box trial-clock"><small>Lap time</small><em id="trial-clock">0:00.000</em></div>
+      <div class="hud-box trial-clock"><small id="trial-target">Ghost delta</small><em id="trial-delta">—</em></div>` :
+      `<div class="hud-box"><small>${cup ? `Race ${cup.round + 1}/${CUPS[cup.id].tracks.length} · Lap` : 'Lap'}</small><em id="lap">1/3</em></div>
+      <div class="hud-box"><small>Place</small><em id="place">1/${room!.drivers.length}</em></div>`}
       <div class="hud-box"><small>km/h</small><em id="speed">0</em></div>
-      <div class="hud-box race-clock"><small>Race time</small><em id="elapsed">0:00.00</em><small id="remaining">3:00 left</small></div>
-      <button class="hud-box item-slot" id="item-slot" type="button" aria-label="Use power-up"><small id="item-hint">Item</small><span id="item-icon" class="item-icon">?</span><b id="item-name">Empty</b></button>
+      ${trial ? '' : `<div class="hud-box race-clock"><small>Race time</small><em id="elapsed">0:00.00</em><small id="remaining">3:00 left</small></div>
+      <button class="hud-box item-slot" id="item-slot" type="button" aria-label="Use power-up"><small id="item-hint">Item</small><span id="item-icon" class="item-icon">?</span><b id="item-name">Empty</b></button>`}
       <canvas id="map" class="map" width="160" height="130" aria-label="${track.name} circuit map"></canvas>
     </div>
     <div class="hud-actions"><button class="tool" id="tilt"${touch.touch ? '' : ' hidden'}>Enable tilt</button><button class="tool" id="music"></button><button class="tool" id="sound"></button><button class="tool" id="exit">Exit</button></div>
-    <div class="status" id="status" role="status"></div><div class="item-banner" id="item-banner" role="status"></div>
+    <div class="status" id="status" role="status"></div>${trial ? '' : '<div class="item-banner" id="item-banner" role="status"></div>'}
     ${touch.touch ? '<p class="race-tilt-status" id="tilt-status" role="status"></p>' : ''}
     <div class="boost" aria-label="Drift boost"><i id="boost"></i></div>
     <div class="touch"${touch.touch ? '' : ' hidden'}><button id="left">Left</button><button id="right">Right</button><button id="brake">Brake / Drift</button></div>
@@ -398,12 +520,12 @@ function begin() {
   touch.calibrate();
   bindTilt();
   const itemBtn = $('item-slot');
-  itemBtn.addEventListener('pointerdown', e => {
+  itemBtn?.addEventListener('pointerdown', e => {
     e.preventDefault();
     touch.queueItem();
     itemBtn.blur();
   });
-  itemBtn.addEventListener('click', e => {
+  itemBtn?.addEventListener('click', e => {
     if (e.detail === 0) touch.queueItem();
   });
   const hudAction = (id: string, action: () => void) => doOn(id, () => {
@@ -420,7 +542,41 @@ function begin() {
   const dialog = $<HTMLDialogElement>('exit-dialog');
   doOn('exit', () => dialog.showModal());
   doOn('keep-racing', () => dialog.close());
-  doOn('confirm-exit', home);
+  doOn('confirm-exit', trial ? openTimeTrials : home);
+}
+
+function trialResults(attempt: Trial) {
+  music.stop();
+  wake.setActive(false);
+  screen = 'results';
+  const { race, name, personal } = attempt;
+  const replay = race.replay;
+  if (replay) motor.finish();
+  const improved = replay && (!personal || replay.lapMs < personal.replay.lapMs);
+  if (improved) writePreference(trialKey(race.track.id), JSON.stringify(replay));
+  const best = improved ? replay : personal?.replay;
+  show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet"><p class="identity">Time trial / ${race.track.name}</p>
+    <h2 class="title" id="result-title">${replay ? formatLap(replay.lapMs) : 'Time expired'}</h2>
+    ${best ? `<p>${improved ? 'New personal best' : `Personal best · ${formatLap(best.lapMs)}`}</p>` : ''}
+    <p id="result-status" role="status"></p>
+    <div class="actions">${button('retry', 'Race again')}${button('back', 'Leaderboard', true)}</div>
+    </div></section>`);
+  doOn('back', openTimeTrials);
+  doOn('retry', () => startTrial(name));
+  if (!replay || !best) return;
+  const status = $('result-status');
+  status.textContent = 'Posting your best lap…';
+  const key = 'tilt-kart-trial-driver';
+  trialDriverId ??= readPreference(key) || crypto.randomUUID();
+  writePreference(key, trialDriverId);
+  void trialRequest<{ rank: number; lapMs: number }>(trialUrl(race.track.id), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...best, name, driverId: trialDriverId }),
+  }).then(({ rank, lapMs }) => {
+    status.textContent = `World rank #${rank} · ${formatLap(lapMs)}`;
+  }).catch(() => {
+    status.textContent = 'Best lap saved on this device. The leaderboard is unavailable.';
+  });
 }
 
 function results() {
@@ -537,12 +693,52 @@ const powerupCallbacks: PowerupCallbacks = {
     motor.sfx(kind);
   }
 };
+
+function tickTrial(attempt: Trial, now: number, dt: number) {
+  const { race, name, personal, world } = attempt;
+  if (screen === 'race') {
+    touch.consumeItem();
+    if (starting && now >= race.start) { starting = false; touch.calibrate(); }
+    race.step(touch.input(), now);
+    if (race.finished) trialResults(attempt);
+  }
+  const mine = pose(race.kart);
+  const actors: Actor[] = [{ id: player, name, pose: mine, slot: 0 }];
+  if (screen === 'race') {
+    const elapsed = race.elapsed;
+    const target = personal ?? world;
+    const shared = personal && world && personal.replay.ghost === world.replay.ghost && personal.replay.lapMs === world.replay.lapMs;
+    const addGhost = (id: string, label: string, ghost: LapGhost, color: string) => {
+      if (now >= race.start && elapsed <= ghost.decoded.lapMs) actors.push({
+        id, name: label, pose: ghostPose(ghost.decoded, elapsed), slot: 0, ghostColor: color,
+      });
+    };
+    if (shared) addGhost('ghost-shared', 'Personal / world best', personal, '#7ce3f6');
+    else {
+      if (personal) addGhost('ghost-personal', 'Personal best', personal, '#7ce3f6');
+      if (world) addGhost('ghost-world', 'World best', world, '#ffa1b9');
+    }
+    set('trial-target', personal ? 'Δ Personal best' : world ? 'Δ World best' : 'Ghost delta');
+    const gap = target ? Math.round(elapsed - ghostTimeAt(target.decoded, mine[0])) : 0;
+    set('trial-delta', target && elapsed > 0 ? `${gap < 0 ? '−' : '+'}${(Math.abs(gap) / 1000).toFixed(3)}` : '—');
+    set('trial-clock', formatLap(elapsed));
+    set('speed', String(now < race.start ? 0 : Math.round(local.speed * 3.6)));
+    set('status', now < race.start ? String(Math.min(3, Math.ceil((race.start - now) / 1000))) : elapsed < 630 ? 'GO!' : '');
+    $('boost').style.transform = `scaleX(${local.boost > 0 ? clamp(local.boost / 1.5, 0, 1) : local.drift})`;
+    drawTrackMap($<HTMLCanvasElement>('map'), track, actors, player);
+  }
+  motor.update(screen === 'race' ? local : undefined);
+  view.render(mine, actors, player, dt);
+}
+
 let last = performance.now();
 function tick(now: number) {
   const dt = Math.min(.05, (now - last) / 1000);
   last = now;
   const racing = screen === 'race' || screen === 'spectate' || screen === 'results';
-  if (racing && room?.start != null) {
+  if (trial) {
+    tickTrial(trial, now, dt);
+  } else if (racing && room?.start != null) {
     const elapsed = Date.now() + clock - room.start;
     const me = room.drivers.find(d => d.id === player);
     const active = screen === 'race' && elapsed >= 0 && elapsed < LIMIT && local.s < LAPS;

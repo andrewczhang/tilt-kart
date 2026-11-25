@@ -30,7 +30,9 @@ function makeMap(track: Circuit) {
   return { x, y, path, finish };
 }
 
-export function drawTrackMap(canvas: HTMLCanvasElement, track: Circuit, actors: Driver[], own: string) {
+type MapActor = Pick<Driver, 'id' | 'slot' | 'pose'> & { ghostColor?: string };
+
+export function drawTrackMap(canvas: HTMLCanvasElement, track: Circuit, actors: MapActor[], own: string) {
   let map = maps.get(track.id);
   if (!map) {
     map = makeMap(track);
@@ -46,9 +48,9 @@ export function drawTrackMap(canvas: HTMLCanvasElement, track: Circuit, actors: 
   ctx.lineWidth = 2;
   ctx.strokeStyle = '#253139';
   ctx.stroke(finish);
-  const mark = (actor: Driver) => {
+  const mark = (actor: MapActor) => {
     const p = track.frame(actor.pose[0]);
-    ctx.beginPath(); ctx.fillStyle = COLORS[actor.slot];
+    ctx.beginPath(); ctx.fillStyle = actor.ghostColor ?? COLORS[actor.slot];
     ctx.arc(x(p.x), y(p.z), actor.id === own ? 4.5 : 3.3, 0, 2 * Math.PI);
     ctx.fill();
     ctx.lineWidth = 1.25; ctx.strokeStyle = '#253139'; ctx.stroke();

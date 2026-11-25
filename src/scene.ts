@@ -166,7 +166,7 @@ function scenery(scene: T.Group, track: Circuit) {
   scene.add(rocks, vistas, cacti, rail);
 }
 
-function kart(color: string) {
+function kart(color: string, ghostColor?: string) {
   const root = new T.Group(), body = new T.Group();
   root.add(body);
   const paint = flat(color);
@@ -190,8 +190,15 @@ function kart(color: string) {
   }
   const flame = block(body, new T.MeshBasicMaterial({ color: '#ffb83d' }), 0, .5, -1.59, .38, .23, .55);
   flame.visible = false;
-  return { root, body, flame, paint, under, baseColor: color };
+  const ghost = ghostColor ? new T.MeshBasicMaterial({ color: ghostColor, opacity: .38, transparent: true, depthWrite: false }) : undefined;
+  if (ghost) {
+    under.visible = false;
+    for (const mesh of body.children) if (mesh instanceof T.Mesh && mesh !== flame) mesh.material = ghost;
+  }
+  return { root, body, flame, paint, under, ghost, baseColor: color };
 }
+
+export type Actor = { id: string; name: string; slot: number; pose: Pose; ghostColor?: string };
 
 export class View {
   private readonly renderer: T.WebGLRenderer;
@@ -242,7 +249,7 @@ export class View {
     this.scene.add(this.world);
     this.powerupScene.setTrack(track);
   }
-  render(local: Pose, actors: { id: string; name: string; slot: number; pose: Pose }[], own: string, dt: number, menu = false, powerups?: PowerupState) {
+  render(local: Pose, actors: Actor[], own: string, dt: number, menu = false, powerups?: PowerupState) {
     const { frame, point } = this.track;
     const width = this.canvas.clientWidth, height = this.canvas.clientHeight;
     const aspect = width / Math.max(1, height);
@@ -258,14 +265,14 @@ export class View {
       seen.add(actor.id);
       let model = this.models.get(actor.id);
       if (!model) {
-        model = kart(COLORS[actor.slot]); this.models.set(actor.id, model); this.scene.add(model.root);
+        model = kart(COLORS[actor.slot], actor.ghostColor); this.models.set(actor.id, model); this.scene.add(model.root);
       }
       const [s, lane, yaw, , , boost] = actor.pose;
       const f = frame(s);
       model.root.position.copy(point(s, lane, .016));
       model.root.rotation.set(0, f.heading, Math.atan(f.bank), 'YXZ');
       model.body.rotation.y = yaw;
-      model.flame.visible = boost > 0;
+      model.flame.visible = !model.ghost && boost > 0;
       model.flame.scale.z = .63 + Math.sin(performance.now() * .1) * .19;
       if (actor.id !== own && !menu && !this.labels.has(actor.id)) {
         const label = document.createElement('span'); label.textContent = actor.name; this.labelLayer.appendChild(label); this.labels.set(actor.id, label);
@@ -276,6 +283,7 @@ export class View {
       model.paint.dispose();
       model.under.material.dispose();
       model.flame.material.dispose();
+      model.ghost?.dispose();
       this.models.delete(id); this.labels.get(id)?.remove(); this.labels.delete(id);
     }
     this.powerupScene.update(powerups, this.models, menu);

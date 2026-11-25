@@ -12,5 +12,8 @@
   "durable_objects": {
     "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  "d1_databases": [
+    { "binding": "TIME_TRIALS", "database_name": "tilt-kart-tt", "database_id": "11bb1bbf-e8d5-449f-b9f5-98c53b43d213" }
+  ]
 }
