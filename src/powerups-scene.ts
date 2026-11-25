@@ -127,13 +127,13 @@ export class PowerupScene {
     menu: boolean
   ) {
     const now = performance.now() * 0.001;
-    this.group.visible = !menu;
-    if (menu) return;
+    this.group.visible = !menu && !!powerups;
+    if (menu || !powerups) return;
 
     // Item boxes
     for (let i = 0; i < this.boxMeshes.length; i++) {
       const mesh = this.boxMeshes[i];
-      const active = !powerups || powerups.boxes[i]?.cooldown === 0;
+      const active = powerups.boxes[i]?.cooldown === 0;
       mesh.cube.visible = active;
       mesh.shadow.visible = active;
       if (active) {
@@ -142,8 +142,6 @@ export class PowerupScene {
         mesh.cube.position.y = mesh.basePos.y + Math.sin(now * 3.1 + i * 0.9) * 0.22;
       }
     }
-
-    if (!powerups) return;
 
     // Hazards (bananas)
     const seenHazards = new Set<string>();

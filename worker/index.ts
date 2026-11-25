@@ -4,8 +4,9 @@ import { cupTrack, isCupId, newCup, nextRound, scoreRound, type Cup } from '../s
 import { BOX_RESPAWN, BOX_SPOTS, validItemEvent, type ItemEvent } from '../src/powerups';
 import { advance, driver, validPose, type Driver, type RoomState, type ServerMessage } from '../src/rules';
 import { DEFAULT_TRACK, isTrackId, type TrackId } from '../src/tracks';
+import { timeTrialRequest } from './time-trial';
 
-type Env = { ASSETS: Fetcher; ROOMS: DurableObjectNamespace<Room> };
+type Env = { ASSETS: Fetcher; ROOMS: DurableObjectNamespace<Room>; TIME_TRIALS: D1Database };
 type Away = Driver & { token?: string };
 type Meta = { created: number; host: string; start: number | null; complete: boolean; gone: Away[]; track?: TrackId; cup?: Cup };
 type Attachment = { driver: Driver; last: number; token?: string; watching?: boolean; hasItem?: boolean };
@@ -19,6 +20,8 @@ export default {
     if (url.pathname.startsWith('/api/') && req.headers.has('Origin') && req.headers.get('Origin') !== url.origin) {
       return new Response('Origin not allowed', { status: 403 });
     }
+    const trial = /^\/api\/tt\/([^/]+)(?:\/(leaderboard|ghost))?$/.exec(url.pathname);
+    if (trial && isTrackId(trial[1])) return timeTrialRequest(req, env.TIME_TRIALS, trial[1], trial[2]);
     if (url.pathname === '/api/rooms' && req.method === 'POST') {
       const code = crypto.randomUUID().slice(0, 8).toUpperCase();
       const response = await env.ROOMS.getByName(code).fetch(new Request(new URL('/create', url), { method: 'POST' }));

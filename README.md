@@ -23,6 +23,8 @@ npx wrangler dev
 
 Open `http://localhost:8787`. Open an invite in another browser window to test multiplayer. `npm run dev` runs Vite with hot reload and proxies the room API to the Wrangler server on port 8787. Use HTTPS when testing motion sensors on an actual phone; a plain HTTP LAN IP is not a secure context.
 
+For local time-trial leaderboards, run `npx wrangler d1 migrations apply TIME_TRIALS --local` before starting Wrangler. Apply the same migration with `--remote` before deploying the Worker with the leaderboard enabled.
+
 ## Worker
 
 `npm run build && npx wrangler deploy` builds and deploys the `tilt-kart` Worker. It serves Vite's static assets with history fallback for `/r/<code>` and handles room creation and upgrades under `/api/`. A public Pages hostname can forward requests and upgrades through a service binding to this Worker.
