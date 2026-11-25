@@ -1,4 +1,5 @@
 import { LAPS, RED_BASIN, SECTORS } from './circuit';
+import type { Cup } from './cups';
 import { grid, pose, type Pose } from './drive';
 import type { ItemEvent } from './powerups';
 import type { TrackId } from './tracks';
@@ -6,7 +7,7 @@ import type { TrackId } from './tracks';
 export type Driver = {
   id: string; name: string; slot: number; pose: Pose; checkpoint: number; finish: number | null; online: boolean;
 };
-export type RoomState = { host: string; start: number | null; complete: boolean; drivers: Driver[]; track?: TrackId };
+export type RoomState = { host: string; start: number | null; complete: boolean; drivers: Driver[]; track?: TrackId; cup?: Cup };
 export type ServerMessage =
   | { type: 'welcome'; id: string; now: number; room: RoomState }
   | { type: 'room'; room: RoomState }

@@ -3,6 +3,8 @@ import { Motor } from './audio';
 import { LocalRace, MAX_RACERS } from './bots';
 import { COLORS, COUNTDOWN, LAPS, LIMIT, clamp, getTrack } from './circuit';
 import { Controls } from './controls';
+import { cupItinerary, cupSelector, fillCupResults } from './cup-ui';
+import { CUPS, CUP_IDS, cupTrack, isCupId, newCup, nextRound, type Cup } from './cups';
 import { drive, grid, pose, type Kart, type Pose } from './drive';
 import { RaceMusic } from './music';
 import { POWERUPS, PowerupState, type ItemEvent, type PowerupCallbacks, type PowerupId } from './powerups';
@@ -22,7 +24,7 @@ const music = new RaceMusic(() => motor.start(), motor.muted);
 const wake = new RaceWakeLock();
 const route = /^\/r\/([0-9a-z]{8})\/?$/i.exec(location.pathname);
 let code = route?.[1].toUpperCase() ?? '';
-let screen: 'home' | 'bots' | 'controls' | 'join' | 'lobby' | 'race' | 'spectate' | 'results' = code ? 'join' : 'home';
+let screen: 'home' | 'bots' | 'grand-prix' | 'controls' | 'join' | 'lobby' | 'race' | 'spectate' | 'results' = code ? 'join' : 'home';
 let socket: WebSocket | undefined;
 let heartbeat = 0, clock = 0, sent = 0;
 let player = '', local = grid(0), room: RoomState | undefined;
@@ -57,17 +59,17 @@ function bindTilt() {
   updateTilt();
 }
 
-function prepareLocal(racers: number, back: () => void) {
+function prepareLocal(racers: number, back: () => void, cup?: Cup) {
   motor.start();
-  if (!touch.touch) { startLocal(racers); return; }
+  if (!touch.touch) { startLocal(racers, cup); return; }
   screen = 'controls';
   show(`<section class="poster compact">${identity}<h2 class="title">Phone controls</h2>
     ${phoneSetup()}
     <p class="help">Hold your phone like a wheel. The kart accelerates automatically.</p>
-    <div class="actions">${button('start', 'Start race')}${button('back', 'Back', true)}</div>
+    <div class="actions">${button('start', cup ? 'Start cup' : 'Start race')}${button('back', 'Back', true)}</div>
     </section>${trackTag(track)}`);
   bindTilt();
-  doOn('start', () => { motor.start(); startLocal(racers); });
+  doOn('start', () => { motor.start(); startLocal(racers, cup); });
   doOn('back', back);
 }
 
@@ -76,8 +78,12 @@ function displayTrack(id: TrackId) {
   view.setTrack(track);
 }
 
+function selectById(id: string) {
+  return Array.from(ui.querySelectorAll('select')).find(select => select.id === id);
+}
+
 function bindTrackPicker(onChange: (id: TrackId) => void) {
-  const select = ui.querySelector('select')!;
+  const select = selectById('track-select')!;
   select.onchange = () => { if (isTrackId(select.value)) onChange(select.value); };
 }
 
@@ -87,7 +93,7 @@ function menu() {
     show(`<section class="poster">${identity}<h1 class="title">Tilt <span>Kart</span></h1>
       <p class="intro">Eight circuits, three laps each. Send a link to race up to seven friends.</p>
       ${trackSelector(practiceTrack)}
-      <div class="actions">${button('create', 'Create room')}${button('bots', 'Vs bots', true)}${button('solo', 'Solo practice', true)}</div>
+      <div class="actions">${button('grand-prix', 'Grand Prix')}${button('create', 'Create room')}${button('bots', 'Vs bots', true)}${button('solo', 'Solo practice', true)}</div>
       <p class="help">${notes()}</p></section>${trackTag(track)}`);
     bindTrackPicker(id => {
       practiceTrack = id;
@@ -96,23 +102,36 @@ function menu() {
     });
     doOn('create', () => { screen = 'join'; menu(); });
     doOn('bots', () => { screen = 'bots'; menu(); });
+    doOn('grand-prix', () => { screen = 'grand-prix'; menu(); });
     doOn('solo', () => prepareLocal(1, home));
     return;
   }
-  if (screen === 'bots') {
+  if (screen === 'bots' || screen === 'grand-prix') {
+    const gp = screen === 'grand-prix';
+    if (gp) displayTrack(CUPS[CUP_IDS[0]].tracks[0]);
     const options = Array.from({ length: MAX_RACERS - 1 }, (_, i) => {
       const racers = i + 2;
       return `<option value="${racers}"${racers === 6 ? ' selected' : ''}>${racers} (you + ${racers - 1} ${racers === 2 ? 'bot' : 'bots'})</option>`;
     }).join('');
-    show(`<section class="poster compact">${identity}<h2 class="title">Vs bots</h2>
-      <form class="setup" id="bot-setup"><label for="racers">Total racers</label><select id="racers" name="racers">${options}</select>
-      <div class="actions"><button class="action" type="submit">${touch.touch ? 'Phone controls' : 'Start race'}</button>${button('back', 'Back', true)}</div></form>
-      <p class="help">${notes()}</p></section>${trackTag(track)}`);
+    show(`<section class="poster compact">${identity}<h2 class="title">${gp ? 'Grand Prix' : 'Vs bots'}</h2>
+      <form class="setup" id="bot-setup">
+      ${gp ? `${cupSelector()}<div id="cup-route">${cupItinerary(CUP_IDS[0])}</div>` : ''}
+      <label for="racers">Total racers</label><select id="racers" name="racers">${options}</select>
+      <div class="actions"><button class="action" type="submit">${touch.touch ? 'Phone controls' : gp ? 'Start cup' : 'Start race'}</button>${button('back', 'Back', true)}</div></form>
+      <p class="help">${gp ? 'Finish each race to score points. In a room, the host can choose a cup for everyone.' : notes()}</p></section>${trackTag(track)}`);
     const setup = $<HTMLFormElement>('bot-setup');
+    const picker = selectById('cup-select');
+    if (picker) picker.onchange = () => {
+      if (!isCupId(picker.value)) return;
+      $('cup-route').innerHTML = cupItinerary(picker.value);
+      displayTrack(CUPS[picker.value].tracks[0]);
+      $('track-callout').outerHTML = trackTag(track);
+    };
     setup.onsubmit = e => {
       e.preventDefault();
       const racers = Number(new FormData(setup).get('racers'));
-      prepareLocal(racers, () => { screen = 'bots'; menu(); });
+      const selected = picker?.value;
+      prepareLocal(racers, () => { screen = gp ? 'grand-prix' : 'bots'; menu(); }, selected && isCupId(selected) ? newCup(selected) : undefined);
     };
     doOn('back', home);
     return;
@@ -142,16 +161,20 @@ function menu() {
   if (screen === 'lobby' && room) {
     const isHost = room.host === player;
     displayTrack(room.track ?? DEFAULT_TRACK);
-    const pickerFocused = document.activeElement?.id === 'track-select';
+    const focus = document.activeElement?.id;
+    const cup = room.cup;
     show(`<section class="poster compact">${identity}<h2 class="title">Starting grid</h2>
       <div id="room-code">Room ${code} · ${room.drivers.length}/8 drivers</div><ol class="list" id="roster"></ol>
-      ${isHost ? trackSelector(track.id) : `<p class="lobby-track">Track: <strong>${track.name}</strong></p>`}
+      ${isHost ? `<div class="track-picker cup-picker">${cupSelector(cup?.id, true)}</div>` : ''}
+      ${cup ? `${isHost ? '' : `<p class="lobby-track"><strong>${CUPS[cup.id].name}</strong></p>`}${cupItinerary(cup.id)}` : isHost ? trackSelector(track.id) : `<p class="lobby-track">Track: <strong>${track.name}</strong></p>`}
       ${phoneSetup()}
-      <div class="actions">${button('share', 'Invite friends', true)}${isHost ? button('start', 'Start race') : ''}${button('leave', 'Leave', true)}</div>
+      <div class="actions">${button('share', 'Invite friends', true)}${isHost ? button('start', cup ? 'Start cup' : 'Start race') : ''}${button('leave', 'Leave', true)}</div>
       <p class="notice" id="notice" role="status"></p></section>${trackTag(track)}`);
     if (isHost) {
-      bindTrackPicker(id => { if (socket?.readyState === WebSocket.OPEN) socket.send(`track:${id}`); });
-      if (pickerFocused) $('track-select').focus();
+      const picker = selectById('cup-select')!;
+      picker.onchange = () => { if (socket?.readyState === WebSocket.OPEN) socket.send(`cup:${picker.value}`); };
+      if (!cup) bindTrackPicker(id => { if (socket?.readyState === WebSocket.OPEN) socket.send(`track:${id}`); });
+      if (focus === 'cup-select' || focus === 'track-select') $(focus)?.focus();
     }
     $('notice').textContent = issue || (isHost ? 'Start when your friends are on the grid.' : 'Waiting for the host to start.');
     fillList($('roster'), [...room.drivers].sort((a, b) => a.slot - b.slot), d => d.id === room?.host ? 'Host' : '');
@@ -275,6 +298,7 @@ function connectionLost(reason: string) {
 }
 
 function receiveRoom(next: RoomState) {
+  const newRace = room?.start !== next.start;
   room = next;
   const me = next.drivers.find(d => d.id === player);
   if (next.start === null) {
@@ -282,17 +306,17 @@ function receiveRoom(next: RoomState) {
     screen = 'lobby';
     menu();
   } else if (next.complete || me?.finish != null) {
-    if (screen === 'lobby') resetRace(me);
+    if (screen === 'lobby' || newRace) resetRace(me);
     results();
-  } else if (screen === 'lobby') {
+  } else if (screen === 'lobby' || newRace) {
     if (me) begin();
     else spectate();
   }
 }
 
-function startLocal(racers: number) {
+function startLocal(racers: number, cup?: Cup) {
   close();
-  localRace = new LocalRace(racers, Date.now() + COUNTDOWN, getTrack(practiceTrack));
+  localRace = new LocalRace(racers, Date.now() + COUNTDOWN, getTrack(practiceTrack), cup);
   player = localRace.human.id;
   clock = 0;
   room = localRace.room;
@@ -341,7 +365,7 @@ function spectate() {
   screen = 'spectate';
   resetRace();
   show(`<div class="hud" aria-label="Race overview">
-      <div class="hud-box" role="status"><strong>Spectating</strong><small>You’re on the grid next race.</small></div>
+      <div class="hud-box" role="status"><strong>Spectating</strong><small>${room?.cup ? 'You can race in the next cup.' : 'You’re on the grid next race.'}</small></div>
       <canvas id="map" class="map" width="160" height="130" aria-label="${track.name} circuit map"></canvas></div>
     <div class="hud-actions"><button class="tool" id="exit">Exit</button></div>`);
   doOn('exit', home);
@@ -351,9 +375,10 @@ function begin() {
   screen = 'race';
   wake.setActive(true);
   resetRace(room!.drivers.find(d => d.id === player));
+  const cup = room?.cup;
   music.start(track.id);
   show(`<div class="hud" aria-label="Race overview">
-      <div class="hud-box"><small>Lap</small><em id="lap">1/3</em></div>
+      <div class="hud-box"><small>${cup ? `Race ${cup.round + 1}/${CUPS[cup.id].tracks.length} · Lap` : 'Lap'}</small><em id="lap">1/3</em></div>
       <div class="hud-box"><small>Place</small><em id="place">1/${room!.drivers.length}</em></div>
       <div class="hud-box"><small>km/h</small><em id="speed">0</em></div>
       <div class="hud-box race-clock"><small>Race time</small><em id="elapsed">0:00.00</em><small id="remaining">3:00 left</small></div>
@@ -405,28 +430,59 @@ function results() {
   if (screen === 'race' && finish !== null) motor.finish();
   screen = 'results';
   wake.setActive(false);
-  const racers = localRace?.racers;
-  const rematch = !localRace && room?.host === player;
   const splits = timing.splits(finish !== null), records = timing.records(finish);
-  show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet"><p class="identity">Tilt Kart / ${track.name}</p>
-    <h2 class="title" id="result-title">${racers === 1 ? 'Practice results' : 'Race results'}</h2>
-    ${me ? `<p class="finish-time"><small>Your result</small><strong>${finish === null ? 'DNF' : formatTime(finish)}</strong></p>
+  const time = finish === null ? 'DNF' : formatTime(finish);
+  const splitsAndRecords = `
     <dl class="splits" aria-label="Lap splits">${Array.from({ length: LAPS }, (_, i) =>
       `<div><dt>Lap ${i + 1}</dt><dd>${formatTime(splits[i] ?? Infinity)}</dd></div>`).join('')}</dl>
     <dl class="records" aria-label="Personal bests"><div><dt>Best lap</dt><dd>${formatTime(records.lap)}</dd></div>
-      <div><dt>Best time</dt><dd>${formatTime(records.race)}</dd></div></dl>` : ''}
+      <div><dt>Best time</dt><dd>${formatTime(records.race)}</dd></div></dl>`;
+  if (room?.cup && room.complete) {
+    cupResults(room.cup, me ? `<details><summary>${track.name} · Your result: ${time}</summary>${splitsAndRecords}</details>` : '');
+    return;
+  }
+  const racers = localRace?.racers;
+  const retry = room?.cup ? '' : racers ? 'Race again' : room?.host === player ? 'Rematch' : '';
+  show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet"><p class="identity">Tilt Kart / ${track.name}</p>
+    <h2 class="title" id="result-title">${racers === 1 ? 'Practice results' : 'Race results'}</h2>
+    ${me ? `<p class="finish-time"><small>Your result</small><strong>${time}</strong></p>${splitsAndRecords}` : ''}
     <ol class="list" id="results-list"></ol><p id="result-status"></p>
-    <div class="actions">${button('back', 'Main menu', true)}${racers ? button('retry', 'Race again') : rematch ? button('retry', 'Rematch') : ''}</div>
+    <div class="actions">${button('back', 'Main menu', true)}${retry ? button('retry', retry) : ''}</div>
     </div></section>`);
   updateResults();
   doOn('back', home);
-  if (racers) doOn('retry', () => prepareLocal(racers, results));
-  else if (rematch) doOn('retry', () => socket?.send('rematch'));
+  if (retry) doOn('retry', () => racers ? prepareLocal(racers, results) : socket?.send('rematch'));
+}
+
+function cupResults(cup: Cup, timingDetails: string) {
+  const event = CUPS[cup.id];
+  const next = nextRound(cup);
+  const racers = localRace?.racers;
+  const canContinue = Boolean(racers || room?.host === player);
+  const continueLabel = next ? `Next: ${getTrack(cupTrack(next)).name}` : racers ? 'Race cup again' : 'Back to lobby';
+  show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet cup-sheet">
+    <p class="identity">${event.name} / Race ${cup.round + 1} of ${event.tracks.length}</p>
+    <h2 class="title" id="result-title">${next ? 'Cup standings' : 'Cup podium'}</h2>
+    ${next ? `<p>${track.name} complete · Next: ${getTrack(cupTrack(next)).name}</p>` : '<ol class="cup-podium" id="cup-podium" aria-label="Top finishers"></ol>'}
+    <table class="cup-table" id="cup-table" aria-label="${event.name} points"><thead><tr><th scope="col">Driver</th>
+    ${cup.results.map((_, i) => `<th scope="col" title="${getTrack(event.tracks[i]).name}">R${i + 1}</th>`).join('')}
+    <th scope="col">Total</th></tr></thead><tbody></tbody></table>
+    ${timingDetails}
+    ${canContinue ? '' : `<p class="cup-wait" role="status">Waiting for the host to ${next ? 'start the next race' : 'return to the lobby'}.</p>`}
+    <div class="actions">${canContinue ? button('cup-next', continueLabel) : ''}${button('back', 'Main menu', true)}</div>
+    </div></section>`);
+  fillCupResults(cup, player);
+  doOn('back', home);
+  if (canContinue) doOn('cup-next', () => {
+    if (racers) startLocal(racers, next ?? newCup(cup.id));
+    else if (socket?.readyState === WebSocket.OPEN) socket.send(next ? `next:${cup.round}` : 'rematch');
+  });
 }
 
 function updateResults() {
   if (!room) return;
   const list = $('results-list');
+  if (!list) return;
   list.replaceChildren();
   fillList(list, rank(room.drivers), d => d.finish !== null ? formatTime(d.finish) : room?.complete ? 'DNF' : d.online ? 'Racing' : 'Disconnected');
   const retry = $<HTMLButtonElement>('retry');
@@ -494,7 +550,10 @@ function tick(now: number) {
     const before = local.s;
     if (localRace) {
       const changed = localRace.step(touch.input(), dt, elapsed);
-      if (screen === 'results' && changed) updateResults();
+      if (screen === 'results' && changed) {
+        if (room.complete && room.cup) results();
+        else updateResults();
+      }
     } else if (active) {
       drive(local, touch.input(), Math.min(dt, elapsed / 1000), track);
     }
