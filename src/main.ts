@@ -1,6 +1,7 @@
 import './style.css';
 import { Motor } from './audio';
-import { COLORS, COUNTDOWN, LAPS, LIMIT, SECTORS, clamp, point } from './circuit';
+import { LocalRace, MAX_RACERS } from './bots';
+import { COLORS, COUNTDOWN, LAPS, clamp, point } from './circuit';
 import { Controls } from './controls';
 import { drive, grid, pose, type Kart, type Pose } from './drive';
 import { readPreference, writePreference } from './preferences';
@@ -13,11 +14,12 @@ const touch = new Controls(updateTilt, () => screen === 'race');
 const motor = new Motor();
 const route = /^\/r\/([0-9a-z]{8})\/?$/i.exec(location.pathname);
 let code = route?.[1].toUpperCase() ?? '';
-let screen: 'home' | 'join' | 'lobby' | 'race' | 'results' = code ? 'join' : 'home';
+let screen: 'home' | 'bots' | 'join' | 'lobby' | 'race' | 'results' = code ? 'join' : 'home';
 let socket: WebSocket | undefined;
 let heartbeat = 0, clock = 0, sent = 0;
 let player = '', local = grid(0), room: RoomState | undefined;
-let solo = false, issue = '', starting = false, joining = false;
+let localRace: LocalRace | undefined;
+let issue = '', starting = false, joining = false;
 let view: View;
 const remotes = new Map<string, Pose>();
 const preview = driver('preview', '', 0);
@@ -37,10 +39,30 @@ function menu() {
   if (screen === 'home') {
     show(`<section class="poster">${identity}<h1 class="title">Tilt <span>Kart</span></h1>
       <p class="intro">Three laps through Red Basin. Send a link to race up to seven friends.</p>
-      <div class="actions">${button('create', 'Create room')}${button('solo', 'Solo practice', true)}</div>
+      <div class="actions">${button('create', 'Create room')}${button('bots', 'Vs bots', true)}${button('solo', 'Solo practice', true)}</div>
       <p class="help">${notes()}</p></section>${sceneTag}`);
     doOn('create', () => { screen = 'join'; menu(); });
-    doOn('solo', () => { doAfterGesture(); practice(); });
+    doOn('bots', () => { screen = 'bots'; menu(); });
+    doOn('solo', () => { doAfterGesture(); startLocal(1); });
+    return;
+  }
+  if (screen === 'bots') {
+    const options = Array.from({ length: MAX_RACERS - 1 }, (_, i) => {
+      const racers = i + 2;
+      return `<option value="${racers}"${racers === 6 ? ' selected' : ''}>${racers} (you + ${racers - 1} ${racers === 2 ? 'bot' : 'bots'})</option>`;
+    }).join('');
+    show(`<section class="poster compact">${identity}<h2 class="title">Vs bots</h2>
+      <form class="setup" id="bot-setup"><label for="racers">Total racers</label><select id="racers" name="racers">${options}</select>
+      <div class="actions"><button class="action" type="submit">Start race</button>${button('back', 'Back', true)}</div></form>
+      <p class="help">${notes()}</p></section>${sceneTag}`);
+    const setup = $<HTMLFormElement>('bot-setup');
+    setup.onsubmit = e => {
+      e.preventDefault();
+      const racers = Number(new FormData(setup).get('racers'));
+      doAfterGesture();
+      startLocal(racers);
+    };
+    doOn('back', home);
     return;
   }
   if (screen === 'join') {
@@ -112,6 +134,7 @@ function close() {
   socket = undefined;
   prev?.close();
   room = undefined;
+  localRace = undefined;
   remotes.clear();
   joining = false;
   issue = '';
@@ -150,7 +173,7 @@ async function connect(name: string) {
       try { message = JSON.parse(e.data); } catch { return; }
       if (message.type === 'welcome') {
         clock = message.now - Date.now();
-        player = message.id; solo = false; joining = false;
+        player = message.id; joining = false;
         screen = 'lobby'; issue = '';
         heartbeat = window.setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) ws.send('ping');
@@ -194,12 +217,12 @@ function receiveRoom(next: RoomState) {
   else if (next.complete && screen === 'results') results();
 }
 
-function practice() {
+function startLocal(racers: number) {
   close();
-  solo = true;
-  player = 'solo';
+  localRace = new LocalRace(racers, Date.now() + COUNTDOWN);
+  player = localRace.human.id;
   clock = 0;
-  room = { host: player, start: Date.now() + COUNTDOWN, complete: false, drivers: [driver(player, 'Practice', 0)] };
+  room = localRace.room;
   begin();
 }
 
@@ -213,7 +236,7 @@ function updateTilt() {
 function begin() {
   screen = 'race';
   const me = room!.drivers.find(d => d.id === player)!;
-  local = grid(me.slot);
+  local = localRace?.kart ?? grid(me.slot);
   sent = 0;
   starting = true;
   remotes.clear();
@@ -253,16 +276,23 @@ function formatTime(ms: number) {
 
 function results() {
   screen = 'results';
+  const racers = localRace?.racers;
   show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet">${identity}
-    <h2 class="title" id="result-title">${solo ? 'Practice results' : 'Race results'}</h2>
+    <h2 class="title" id="result-title">${racers === 1 ? 'Practice results' : 'Race results'}</h2>
     <ol class="list" id="results-list"></ol><p id="result-status"></p>
-    <div class="actions">${button('back', 'Main menu', true)}${solo ? button('retry', 'Race again') : ''}</div>
+    <div class="actions">${button('back', 'Main menu', true)}${racers ? button('retry', 'Race again') : ''}</div>
     </div></section>`);
-  if (!room) return;
-  fillList($('results-list'), rank(room.drivers), d => d.finish !== null ? formatTime(d.finish) : room?.complete || !d.online || issue ? 'DNF' : 'Racing');
-  $('result-status').textContent = issue || (!room.complete ? 'Waiting for the finish…' : '');
+  updateResults();
   doOn('back', home);
-  if (solo) doOn('retry', practice);
+  if (racers) doOn('retry', () => startLocal(racers));
+}
+
+function updateResults() {
+  if (!room) return;
+  const list = $('results-list');
+  list.replaceChildren();
+  fillList(list, rank(room.drivers), d => d.finish !== null ? formatTime(d.finish) : room?.complete || !d.online || issue ? 'DNF' : 'Racing');
+  $('result-status').textContent = issue || (!room.complete ? 'Waiting for the finish…' : '');
 }
 
 function set(id: string, value: string) {
@@ -293,24 +323,25 @@ function tick(now: number) {
     const elapsed = Date.now() + clock - room.start;
     const me = room.drivers.find(d => d.id === player)!;
     const active = screen === 'race' && elapsed >= 0 && local.s < LAPS;
-    if (active) {
-      if (starting) { starting = false; touch.calibrate(); }
+    if (active && starting) { starting = false; touch.calibrate(); }
+    if (localRace) {
+      const changed = localRace.step(touch.input(), dt, elapsed);
+      if (screen === 'race' && (me.finish !== null || room.complete)) results();
+      else if (screen === 'results' && changed) updateResults();
+    } else if (active) {
       drive(local, touch.input(), dt);
     }
     const mine = pose(local);
-    if (screen === 'race' && elapsed >= 0 && me.finish === null) {
+    if (!localRace && screen === 'race' && elapsed >= 0 && me.finish === null) {
       mine[0] = Math.min(mine[0], LAPS);
-      if (solo) {
-        me.pose = mine; me.checkpoint = Math.floor(mine[0] * SECTORS);
-        if (local.s >= LAPS) { me.finish = elapsed; room.complete = true; results(); }
-      } else if (now - sent >= 55 && socket?.readyState === WebSocket.OPEN) {
+      if (now - sent >= 55 && socket?.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify(mine)); sent = now;
       }
     }
-    if (solo && elapsed >= LIMIT && screen === 'race') { room.complete = true; results(); }
-    else if (!solo && me.finish !== null && screen === 'race') results();
+    if (!localRace && me.finish !== null && screen === 'race') results();
     const visible = room.drivers.filter(d => d.online).map(d => {
       if (d.id === player) return { ...d, pose: mine };
+      if (localRace) return d;
       const p = remotes.get(d.id) ?? [...d.pose] as Pose;
       for (let i = 0; i < p.length; i++) p[i] += (d.pose[i] - p[i]) * Math.min(1, dt * 15);
       remotes.set(d.id, p);
