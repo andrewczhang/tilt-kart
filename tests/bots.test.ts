@@ -138,6 +138,9 @@ for (const crowded of [false, true]) {
       }
       drive(kart, pilot.input(kart, elapsed, rivals), dt, track);
       if (elapsed <= 500 && crowded) assert.ok(Math.abs(kart.lane) < .2);
+      const gap = Math.abs(kart.s - stopped.pose[0]) * track.length;
+      assert.ok(gap >= 2.5 - 1e-6 || Math.abs(kart.lane - stopped.pose[1]) >= 2.5,
+        `overlapped stopped kart at ${gap.toFixed(2)} m gap and ${Math.abs(kart.lane).toFixed(2)} m lateral clearance`);
     }
     assert.ok(kart.s >= passed, `only advanced ${((kart.s - stopped.pose[0]) * track.length).toFixed(1)} m beyond the stopped kart`);
   });

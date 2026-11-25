@@ -2,7 +2,7 @@ import { clamp, delta, mix, RED_BASIN, type Circuit } from './circuit';
 import type { BoostPad } from './tracks';
 
 export type Kart = { s: number; lane: number; yaw: number; speed: number; drift: number; boost: number; steer: number; brakeHeld: boolean; spin: number; star: number };
-export type Input = { steer: number; brake: boolean; gas: boolean };
+export type Input = { steer: number; brake: boolean; gas: boolean; maxProgress?: number };
 export type Pose = [s: number, lane: number, yaw: number, speed: number, drift: number, boost: number];
 export const PADS = RED_BASIN.pads;
 export const PAD_WIDTH = 3.3;
@@ -67,7 +67,7 @@ export function drive(k: Kart, input: Input, dt: number, track = RED_BASIN) {
     k.lane = clamp(k.lane, -border, border);
     if (!starred) k.speed = Math.max(0, k.speed - (Math.sign(k.steer) === Math.sign(k.lane) ? 41 : 15) * dt);
   }
-  k.s += k.speed * (1 - Math.abs(k.steer) * (slip ? .055 : .10)) * dt / track.length;
+  k.s = Math.min(input.maxProgress ?? Infinity, k.s + k.speed * (1 - Math.abs(k.steer) * (slip ? .055 : .10)) * dt / track.length);
   for (const p of track.pads) {
     if (entersPad(p, previous, previousLane, k, track)) k.boost = Math.max(k.boost, 1.38);
   }

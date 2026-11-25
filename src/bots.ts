@@ -12,6 +12,7 @@ const tuning = {
   Hard: { pace: 42.5, line: 1, error: .23, reaction: .10, drift: .40, pads: 1 },
 } satisfies Record<Difficulty, Record<string, number>>;
 const names = ['Comet', 'Dusty', 'Nitro', 'Swerve', 'Blaze', 'Dash', 'Drift'];
+const CREEP_CLEARANCE = 2.5;
 
 type LineSample = { bend: number; lane: number };
 const lines = new WeakMap<Circuit, LineSample[]>();
@@ -80,7 +81,7 @@ export class BotPilot {
 
   private canCreepPast(kart: Kart, lane: number, rival: Rival) {
     const offset = lane - rival.lane;
-    return rival.speed < 2 && kart.speed < 5.5 && Math.abs(offset) >= 2.2
+    return rival.speed < 2 && kart.speed < 5.5 && Math.abs(offset) >= CREEP_CLEARANCE
       && (kart.lane - rival.lane) * offset >= 0;
   }
 
@@ -101,7 +102,10 @@ export class BotPilot {
         const candidates = [front.lane - 2.9, front.lane + 2.9]
           .filter(lane => Math.abs(lane) <= safeLane && this.canShift(kart, lane, rivals, front));
         candidates.sort((a, b) => Math.abs(a - kart.lane) + .35 * Math.abs(a - target) - Math.abs(b - kart.lane) - .35 * Math.abs(b - target));
-        if (candidates.length) this.maneuver = { kind: 'pass', rival: front.id, lane: candidates[0], until: time + 2.6 };
+        if (candidates.length) {
+          const closePass = front.gap < 5 && this.canCreepPast(kart, candidates[0], front);
+          this.maneuver = { kind: 'pass', rival: front.id, lane: candidates[0], until: time + (closePass ? 4.2 : 2.6) };
+        }
       } else if (this.difficulty !== 'Easy' && behind && behind.gap < -10 && behind.gap > -21
         && time >= this.defendAt && behind.id !== this.defended && Math.abs(behind.lane - kart.lane) < 3.6) {
         const lane = clamp(mix(kart.lane, behind.lane, .8), -safeLane, safeLane);
@@ -113,15 +117,17 @@ export class BotPilot {
       }
     }
     const pass = this.maneuver?.kind === 'pass' ? rivals.find(rival => rival.id === this.maneuver?.rival) : undefined;
-    let creeping = false;
+    let maxProgress: number | undefined;
     if (this.maneuver && this.canShift(kart, this.maneuver.lane, rivals, pass)) {
       target = this.maneuver.lane;
-      creeping = !!pass && Math.abs(pass.gap) < 5 && Math.abs(kart.lane - pass.lane) < 2.2
-        && this.canCreepPast(kart, target, pass);
+      if (pass && pass.gap >= 0 && pass.gap < 5 && Math.abs(kart.lane - pass.lane) < CREEP_CLEARANCE
+        && this.canCreepPast(kart, target, pass)) {
+        maxProgress = kart.s + Math.max(0, pass.gap - CREEP_CLEARANCE) / this.track.length;
+      }
     } else if (this.maneuver || !this.canShift(kart, target, rivals)) target = kart.lane;
-    if (creeping) pace = Math.min(pace, 4.5);
+    if (maxProgress !== undefined) pace = Math.min(pace, 4.5);
     else if (front && front.gap < 7) pace = Math.min(pace, front.speed + Math.max(0, front.gap - 3));
-    return { target, pace, following: !creeping && !!front && front.gap < 4.2 && kart.speed > front.speed + 2.5 };
+    return { target, pace, maxProgress, following: maxProgress === undefined && !!front && front.gap < 4.2 && kart.speed > front.speed + 2.5 };
   }
 
   input(kart: Kart, elapsed: number, racers: Driver[]): Input {
@@ -142,7 +148,7 @@ export class BotPilot {
     const mistake = Math.max(0, Math.sin(time * .91 + phase) - .86) * skill.error * 30;
     const desiredPace = skill.pace - slot * .21 - severity * (this.difficulty === 'Hard' ? 2.8 : 4.6) - mistake;
     const rivals = this.traffic(kart, racers);
-    const { target, pace, following } = this.position(kart, time, clamp(lineTarget, -safeLane, safeLane), desiredPace, rivals);
+    const { target, pace, following, maxProgress } = this.position(kart, time, clamp(lineTarget, -safeLane, safeLane), desiredPace, rivals);
     const bend = clamp(delta(track.frame(kart.s + .004).heading - track.frame(kart.s).heading, 2 * Math.PI) / .21, -1, 1);
     let steer = clamp((target - kart.lane) * .48 + bend * .34, -1, 1);
     const direction = Math.sign(here.bend);
@@ -158,8 +164,9 @@ export class BotPilot {
       && this.canShift(kart, kart.lane + this.driftSign * 2.2, rivals);
     if (drifting) steer = this.driftSign * clamp(steer * this.driftSign, .33, .52);
     else this.driftUntil = 0;
+    if (maxProgress !== undefined) steer = Math.sign(target - kart.lane) * Math.max(.85, Math.abs(steer));
     const heavyBrake = severity > 1.08 && kart.speed > pace + 5 && Math.abs(steer) < .22;
-    return { steer: following ? clamp(steer, -.19, .19) : steer, gas: kart.speed < pace, brake: following || drifting || heavyBrake };
+    return { steer: following ? clamp(steer, -.19, .19) : steer, gas: kart.speed < pace, brake: following || drifting || heavyBrake, maxProgress };
   }
 }
 
