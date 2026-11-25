@@ -214,6 +214,17 @@ test('starred opponent bumps local kart into a spin-out', () => {
   assert.ok(local.spin > 1);
 });
 
+test('a starred kart spins out a bot on side contact inside the bump radius', () => {
+  const state = new PowerupState();
+  const kart = { ...grid(0), s: .4, lane: 0, star: STAR_DURATION };
+  const bot = { ...grid(1), s: kart.s, lane: 2.2 };
+  const hits: string[] = [];
+  state.step(1 / 60, 'p1', kart, [
+    { id: 'bot', name: 'Bot', slot: 1, pose: pose(bot) }
+  ], 1, 2, false, { onActorHit: id => hits.push(id) });
+  assert.deepEqual(hits, ['bot']);
+});
+
 test('fresh peels hit pursuing bots, spin-outs preserve held items, and homing skips finished racers', () => {
   const state = new PowerupState();
   const player = grid(0);

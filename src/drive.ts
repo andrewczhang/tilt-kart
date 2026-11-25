@@ -6,7 +6,8 @@ export type Input = { steer: number; brake: boolean; gas: boolean; maxProgress?:
 export type Pose = [s: number, lane: number, yaw: number, speed: number, drift: number, boost: number];
 type RemoteVelocity = { x: number; z: number };
 export type RemoteSample = { pose: Pose; receivedAt: number; velocity?: RemoteVelocity };
-type RemoteContact = { x: number; y: number; z: number; velocity: RemoteVelocity | undefined };
+type ContactPoint = { x: number; y: number; z: number };
+type RemoteContact = ContactPoint & { velocity: RemoteVelocity | undefined };
 export const PADS = RED_BASIN.pads;
 export const PAD_WIDTH = 3.3;
 export const PAD_LENGTH = 4.4;
@@ -102,14 +103,19 @@ export function remoteContact({ pose: [s, lane], receivedAt, velocity }: RemoteS
   return { x: p.x + (velocity?.x ?? 0) * age, y: p.y, z: p.z + (velocity?.z ?? 0) * age, velocity };
 }
 
+export function kartContactDistance(a: ContactPoint, b: ContactPoint) {
+  if (Math.abs(a.y - b.y) > 2.5) return null;
+  const distance = Math.hypot(a.x - b.x, a.z - b.z);
+  return distance < KART_DIAMETER ? distance : null;
+}
+
 export function bump(a: Kart, b: Kart | RemoteContact, track = RED_BASIN) {
   const remote = 'velocity' in b;
   const aFrame = track.frame(a.s);
   const p = track.point(a.s, a.lane), q = remote ? b : track.point(b.s, b.lane);
-  if (Math.abs(p.y - q.y) > 2.5) return;
+  const distance = kartContactDistance(p, q);
+  if (distance === null) return;
   const dx = p.x - q.x, dz = p.z - q.z;
-  const distance = Math.hypot(dx, dz);
-  if (distance >= KART_DIAMETER) return;
   const nx = distance > 1e-6 ? dx / distance : Math.cos(aFrame.heading);
   const nz = distance > 1e-6 ? dz / distance : -Math.sin(aFrame.heading);
   const aHeading = aFrame.heading + a.yaw, bHeading = remote ? 0 : track.frame(b.s).heading + b.yaw;

@@ -1,5 +1,5 @@
 import { RED_BASIN, clamp, delta, wrap, type Circuit } from './circuit';
-import type { Kart, Pose } from './drive';
+import { kartContactDistance, type Kart, type Pose } from './drive';
 
 export type PowerupId = 'turbo' | 'banana' | 'shell' | 'homing' | 'star';
 
@@ -401,21 +401,23 @@ export class PowerupState {
 
     // Star-powered bump check (local starred bumps bots; remote starred bumps local)
     if (local.star > 0 && cb.onActorHit) {
+      const point = track.point(local.s, local.lane);
       for (const a of actors) {
         if (a.id === localId || a.online === false || a.finish != null) continue;
         if (this.fxOf(a.id).spin > 0) continue;
-        if (trackDistance(local.s, a.pose[0], track.length) < 2.6 && Math.abs(local.lane - a.pose[1]) < 1.9) {
+        if (kartContactDistance(point, track.point(a.pose[0], a.pose[1])) !== null) {
           this.effects.set(a.id, { star: 0, spin: SPIN_DURATION });
           cb.onActorHit(a.id, 'star');
           cb.sfx?.('hit');
         }
       }
     } else if (local.star <= 0 && local.spin <= 0) {
+      const point = track.point(local.s, local.lane);
       for (const a of actors) {
         if (a.id === localId || a.online === false) continue;
         const fx = this.effects.get(a.id);
         if (!fx || fx.star <= 0) continue;
-        if (trackDistance(local.s, a.pose[0], track.length) < 2.6 && Math.abs(local.lane - a.pose[1]) < 1.9) {
+        if (kartContactDistance(point, track.point(a.pose[0], a.pose[1])) !== null) {
           this.hitLocal(localId, local, 'star', undefined, cb);
           break;
         }
