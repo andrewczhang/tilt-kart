@@ -778,6 +778,7 @@ function tick(now: number) {
     const active = canDrive && elapsed >= 0 && elapsed < LIMIT;
     if (active && starting) { starting = false; touch.calibrate(); }
     const before = local.s;
+    const beforeLane = local.lane;
     const frameRaceDt = clamp((Math.min(elapsed, LIMIT) - Math.max(0, elapsed - dt * 1000)) / 1000, 0, dt);
     if (localRace) {
       const changed = localRace.step(touch.input(), dt, elapsed);
@@ -824,7 +825,7 @@ function tick(now: number) {
         ? { ...powerupCallbacks, onActorHit: actorId => localRace!.hitBot(actorId) }
         : powerupCallbacks;
       if (touch.consumeItem()) powerups.useItem(player, local, visible, callbacks, track);
-      powerups.step(dt, player, local, visible, place, room.drivers.length, localRace?.racers === 1, callbacks, Math.random, track);
+      powerups.step(dt, player, local, visible, place, room.drivers.length, localRace?.racers === 1, callbacks, Math.random, track, { s: before, lane: beforeLane });
     } else if (room.start !== null) {
       powerups.stepSpectator(dt, visible, track);
     }

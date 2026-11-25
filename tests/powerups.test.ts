@@ -14,6 +14,17 @@ import {
 } from '../src/powerups';
 import { advance, driver, validPose } from '../src/rules';
 
+test('a 15 fps turbo frame picks up a box crossed between its endpoints', () => {
+  const state = new PowerupState();
+  const box = state.boxes[0];
+  state.boxes[1].cooldown = 1;
+  const before = { s: box.s - 2.6 / LENGTH, lane: box.lane + .6 };
+  const kart = { ...grid(0), s: box.s + .9 / LENGTH, lane: box.lane + 2.2, speed: 60 };
+  const events: ItemEvent[] = [];
+  state.step(1 / 15, 'p1', kart, [], 1, 1, true, { emit: event => events.push(event) }, () => .1, undefined, before);
+  assert.deepEqual(events, [{ kind: 'pickup', box: box.id }]);
+});
+
 test('driving through an item box starts the roulette, awards an item, and respawns after cooldown', () => {
   const state = new PowerupState();
   const kart = grid(0);

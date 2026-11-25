@@ -131,6 +131,22 @@ function trackDistance(sA: number, sB: number, length: number) {
   return Math.abs(delta(wrap(sA) - wrap(sB))) * length;
 }
 
+type TrackPosition = Pick<Kart, 's' | 'lane'>;
+
+function crossesBox(from: TrackPosition, to: TrackPosition, box: TrackPosition, length: number) {
+  const travel = (to.s - from.s) * length;
+  const start = delta((from.s + to.s) / 2 - box.s) * length - travel / 2;
+  const axis = (offset: number, movement: number, halfWidth: number) => {
+    if (movement === 0) return Math.abs(offset) < halfWidth ? [0, 1] : [1, 0];
+    const a = (-halfWidth - offset) / movement;
+    const b = (halfWidth - offset) / movement;
+    return [Math.min(a, b), Math.max(a, b)];
+  };
+  const [enterS, exitS] = axis(start, travel, 2.2);
+  const [enterLane, exitLane] = axis(from.lane - box.lane, to.lane - from.lane, 1.85);
+  return Math.max(0, enterS, enterLane) < Math.min(1, exitS, exitLane);
+}
+
 function findAheadTarget(localId: string, localS: number, actors: RaceActor[]): string | undefined {
   let bestId: string | undefined;
   let bestGap = Infinity;
@@ -248,7 +264,8 @@ export class PowerupState {
     solo: boolean,
     cb: PowerupCallbacks = {},
     rand: () => number = Math.random,
-    track: Circuit = RED_BASIN
+    track: Circuit = RED_BASIN,
+    before: TrackPosition = local
   ) {
     for (const b of this.boxes) {
       if (b.cooldown > 0) b.cooldown = Math.max(0, b.cooldown - dt);
@@ -288,7 +305,7 @@ export class PowerupState {
     // Box pickup check for local kart
     for (const b of this.boxes) {
       if (b.cooldown > 0) continue;
-      if (trackDistance(local.s, b.s, track.length) < 2.2 && Math.abs(local.lane - b.lane) < 1.85) {
+      if (crossesBox(before, local, b, track.length)) {
         b.cooldown = BOX_RESPAWN;
         cb.emit?.({ kind: 'pickup', box: b.id });
         if (!this.held && !this.rolling) {
