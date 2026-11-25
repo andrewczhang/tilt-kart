@@ -1,11 +1,11 @@
 import './style.css';
 import { Motor } from './audio';
 import { DIFFICULTIES, LocalRace, MAX_RACERS, type Difficulty } from './bots';
-import { COLORS, COUNTDOWN, LAPS, LIMIT, clamp, getTrack } from './circuit';
+import { COLORS, COUNTDOWN, LAPS, LIMIT, clamp, delta, getTrack } from './circuit';
 import { Controls } from './controls';
 import { cupItinerary, cupSelector, fillCupResults } from './cup-ui';
 import { CUPS, CUP_IDS, cupTrack, isCupId, newCup, nextRound, type Cup } from './cups';
-import { drive, grid, pose, type Kart, type Pose } from './drive';
+import { bump, drive, grid, pose, substep, type Kart, type Pose } from './drive';
 import { newDriverId } from './driver-id';
 import { decodeGhost, ghostPose, ghostTimeAt, type Ghost, type Replay, type Standing } from './ghost';
 import { RaceMusic } from './music';
@@ -738,9 +738,20 @@ function tickTrial(attempt: Trial, now: number, dt: number) {
   view.render(mine, actors, player, dt);
 }
 
+function blendRemote(d: Driver, dt: number) {
+  const p = remotes.get(d.id) ?? [...d.pose] as Pose;
+  const blend = 1 - Math.exp(-dt * 15);
+  for (let i = 0; i < p.length; i++) {
+    const gap = d.pose[i] - p[i];
+    p[i] += (i === 2 ? delta(gap, 2 * Math.PI) : gap) * blend;
+  }
+  p[2] = delta(p[2], 2 * Math.PI);
+  remotes.set(d.id, p);
+}
+
 let last = performance.now();
 function tick(now: number) {
-  const dt = Math.min(.05, (now - last) / 1000);
+  const dt = (now - last) / 1000;
   last = now;
   const racing = screen === 'race' || screen === 'spectate' || screen === 'results';
   if (trial) {
@@ -748,22 +759,36 @@ function tick(now: number) {
   } else if (racing && room?.start != null) {
     const elapsed = Date.now() + clock - room.start;
     const me = room.drivers.find(d => d.id === player);
-    const active = screen === 'race' && elapsed >= 0 && elapsed < LIMIT && local.s < LAPS;
+    const canDrive = screen === 'race' && me?.finish === null && !room.complete && local.s < LAPS;
+    const active = canDrive && elapsed >= 0 && elapsed < LIMIT;
     if (active && starting) { starting = false; touch.calibrate(); }
     const before = local.s;
+    const frameRaceDt = clamp((Math.min(elapsed, LIMIT) - Math.max(0, elapsed - dt * 1000)) / 1000, 0, dt);
     if (localRace) {
       const changed = localRace.step(touch.input(), dt, elapsed);
       if (screen === 'results' && changed) {
         if (room.complete && room.cup) results();
         else updateResults();
       }
-    } else if (active) {
-      drive(local, touch.input(), Math.min(dt, elapsed / 1000), track);
+    } else {
+      const peers = room.drivers.filter(d => d.id !== player && d.online);
+      const raceDt = canDrive ? frameRaceDt : 0;
+      for (const peer of peers) blendRemote(peer, dt - raceDt);
+      if (raceDt > 0) {
+        const input = touch.input();
+        substep(raceDt, step => {
+          drive(local, input, step, track);
+          for (const peer of peers) {
+            blendRemote(peer, step);
+            if (peer.finish === null && local.star <= 0 && powerups.fxOf(peer.id).star <= 0) bump(local, remotes.get(peer.id)!, track);
+          }
+        });
+      }
     }
     const mine = pose(local);
     if (screen === 'race' && elapsed >= 0) {
       const progress = !localRace && mine[0] >= LAPS ? Math.max(LAPS, local.s) : local.s;
-      timing.step(before, progress, Math.min(elapsed, LIMIT), dt * 1000, localRace?.human.finish ?? undefined);
+      timing.step(before, progress, Math.min(elapsed, LIMIT), frameRaceDt * 1000, localRace?.human.finish ?? undefined);
     }
     if (!localRace && !room.complete && elapsed >= LIMIT && checkedDeadline !== room.start && socket?.readyState === WebSocket.OPEN) {
       socket.send('status');
@@ -771,11 +796,7 @@ function tick(now: number) {
     }
     const visible = room.drivers.filter(d => d.online).map(d => {
       if (d.id === player) return { ...d, pose: mine };
-      if (localRace) return d;
-      const p = remotes.get(d.id) ?? [...d.pose] as Pose;
-      for (let i = 0; i < p.length; i++) p[i] += (d.pose[i] - p[i]) * Math.min(1, dt * 15);
-      remotes.set(d.id, p);
-      return { ...d, pose: p };
+      return localRace ? d : { ...d, pose: remotes.get(d.id) ?? d.pose };
     });
     const current = room.drivers.map(d => d.id === player ? { ...d, pose: mine } : d);
     const place = rank(current).findIndex(d => d.id === player) + 1;

@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { LAPS, LENGTH, SECTORS, WIDTH, delta, frame, point } from '../src/circuit';
-import { PADS, PAD_LENGTH, PAD_WIDTH, drive, grid, pose } from '../src/drive';
+import { LAPS, LENGTH, LIMIT, SECTORS, WIDTH, delta, frame, point } from '../src/circuit';
+import { BOOST_SPEED, PADS, PAD_LENGTH, PAD_WIDTH, TOP_SPEED, bump, drive, grid, pose } from '../src/drive';
 import { advance, driver, rank, validPose } from '../src/rules';
+import { centerSteer } from './steering';
+
+const gas = { steer: 0, brake: false, gas: true };
+const dt = 1 / 60;
 
 test('the elevated and banked track joins at the finish line', () => {
   assert.deepEqual(point(0).toArray(), point(1).toArray());
@@ -52,7 +56,7 @@ test('boost pads work only within their lane and the wall costs speed', () => {
 test('a boost pad triggers on side entry past its center but not beyond its trailing edge', () => {
   const pad = PADS[0], kart = grid(0);
   const input = { steer: 1, brake: false, gas: true };
-  const side = { lane: pad.lane - PAD_WIDTH / 2 - .02, speed: 32, steer: 1 };
+  const side = { lane: pad.lane - PAD_WIDTH / 2 - .02, speed: 32, steer: 1, yaw: .08 };
   Object.assign(kart, side, { s: pad.s + .5 / LENGTH });
   drive(kart, input, 1 / 60);
   const entering = kart.boost;
@@ -64,6 +68,65 @@ test('a boost pad triggers on side entry past its center but not beyond its trai
   assert.equal(kart.boost, 0);
 });
 
+test('throttle with a fixed heading changes lanes but does not complete a lap', () => {
+  const kart = grid(0);
+  const before = frame(kart.s).heading;
+  for (let i = 0; i < 45; i++) drive(kart, gas, dt);
+  assert.ok(Math.abs(delta(frame(kart.s).heading + kart.yaw - before, 2 * Math.PI)) < 1e-6);
+  for (let i = 45; i < LIMIT / (dt * 1000); i++) {
+    drive(kart, gas, dt);
+    assert.ok(kart.s < 1);
+  }
+});
+
+test('a shallow drift glances off a barrier while retaining most speed', () => {
+  const border = WIDTH / 2 - .85;
+  const kart = Object.assign(grid(0), { s: 0, lane: border - .01, yaw: .12, slipAngle: .04, steer: .3, speed: TOP_SPEED });
+  const drift = { ...gas, brake: true, steer: .3 };
+  drive(kart, drift, dt);
+  assert.equal(kart.lane, border);
+  assert.ok(kart.speed > TOP_SPEED * .9 && kart.speed < TOP_SPEED);
+  drive(kart, drift, dt);
+  assert.ok(kart.lane < border);
+  assert.ok(kart.speed > TOP_SPEED * .9);
+});
+
+test('successive drift boosts refresh the timer without stacking speed or duration', () => {
+  const kart = grid(0);
+  kart.speed = TOP_SPEED;
+  for (let i = 0; i < 5; i++) {
+    Object.assign(kart, { drift: 1, brakeHeld: true });
+    for (let j = 0; j < 32; j++) {
+      drive(kart, { ...gas, steer: centerSteer(kart) }, dt);
+      assert.ok(kart.speed <= BOOST_SPEED && kart.boost <= 1.47);
+    }
+  }
+  assert.equal(kart.speed, BOOST_SPEED);
+});
+
+test('a rear-end bump separates both karts and transfers speed to the leading kart', () => {
+  const rear = Object.assign(grid(0), { s: -.8 / LENGTH, lane: 0, speed: 38 });
+  const lead = Object.assign(grid(1), { s: .8 / LENGTH, lane: 0, speed: 24 });
+  bump(rear, lead);
+  assert.ok(point(rear.s, rear.lane).distanceTo(point(lead.s, lead.lane)) > 2.6);
+  assert.ok(rear.speed > 24 && rear.speed < 38);
+  assert.ok(lead.speed > rear.speed && lead.speed < 38);
+  const speeds = [rear.speed, lead.speed];
+  bump(rear, lead);
+  assert.deepEqual([rear.speed, lead.speed], speeds);
+});
+
+test('an online kart bumps away from a remote snapshot without changing it', () => {
+  const local = Object.assign(grid(0), { s: 0, lane: -.85, yaw: .3, speed: 38 });
+  const remote = pose(Object.assign(grid(1), { s: 0, lane: .85, speed: 38 }));
+  const before = [...remote];
+  bump(local, remote);
+  assert.deepEqual(remote, before);
+  assert.ok(local.lane < -1.5);
+  assert.ok(local.slipAngle < -.3);
+  assert.ok(local.speed > 34);
+});
+
 test('room judges from the ordered checkpoints and rejects implausible poses', () => {
   const d = driver('a', 'Test', 0);
   assert.ok(validPose(d.pose));
@@ -72,7 +135,7 @@ test('room judges from the ordered checkpoints and rejects implausible poses', (
   const k = grid(0);
   let frames = 0;
   while (k.s < LAPS && frames++ < 10_800) {
-    const steer = Math.max(-1, Math.min(1, -k.lane * .35));
+    const steer = centerSteer(k);
     drive(k, { steer, brake: false, gas: true }, 1 / 60);
     if (frames % 4 === 0 || k.s >= LAPS) {
       const p = pose(k);
@@ -87,6 +150,18 @@ test('room judges from the ordered checkpoints and rejects implausible poses', (
   const other = driver('b', 'Second', 1);
   other.finish = d.finish + 10;
   assert.deepEqual(rank([other, d, driver('c', 'DNF', 2)]).map(p => p.id), ['a', 'b', 'c']);
+});
+
+test('the server accepts backward travel without losing earned checkpoints', () => {
+  const d = driver('a', 'Test', 0);
+  d.pose[0] = .251;
+  d.checkpoint = 1;
+  const back: typeof d.pose = [.249, 0, 3.1416, 25, 0, 0];
+  assert.ok(validPose(back));
+  assert.ok(advance(d, back, 7000, .08));
+  assert.equal(d.pose[0], .249);
+  assert.equal(d.checkpoint, 1);
+  assert.equal(advance(d, [-1, 0, 0, 42, 0, 0], 7060, .06), false);
 });
 
 test('a delayed pose credits each checkpoint through the finish line', () => {

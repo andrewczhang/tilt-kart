@@ -414,6 +414,7 @@ export class PowerupState {
     if (local.spin > 0) return;
     local.spin = SPIN_DURATION;
     local.boost = 0;
+    local.turbo = 0;
     local.drift = 0;
     local.speed = Math.min(local.speed, 14);
     const label = item === 'banana' ? 'SLIPPED ON PEEL' : item === 'homing' ? 'HIT BY HOMING SHELL' : item === 'star' ? 'BUMPED BY STAR' : 'HIT BY SHELL';
@@ -428,7 +429,8 @@ export class PowerupState {
     this.held = null;
 
     if (item === 'turbo') {
-      local.boost = Math.max(local.boost, 1.95);
+      local.turbo = 1.95;
+      local.boost = Math.max(local.boost, local.turbo);
       local.speed = Math.max(local.speed, 54);
       this.announce('TURBO BOOST', POWERUPS.turbo.color, 1.2);
       cb.sfx?.('turbo');

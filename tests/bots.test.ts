@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BotPilot, DIFFICULTIES, LocalRace, MAX_RACERS } from '../src/bots';
-import { LAPS, LIMIT, RED_BASIN, SECTORS, WIDTH, clamp, getTrack } from '../src/circuit';
+import { LAPS, LENGTH, LIMIT, RED_BASIN, SECTORS, WIDTH, getTrack, point } from '../src/circuit';
 import { drive, grid } from '../src/drive';
 import { driver, rank, validPose } from '../src/rules';
 import { TRACK_IDS } from '../src/tracks';
+import { centerSteer } from './steering';
 
 const idle = { gas: false, brake: false, steer: 0 };
 const dt = 1 / 60;
@@ -47,7 +48,7 @@ test('bots keep racing after the player finishes and results keep the player fir
   let elapsed = 0;
   while (elapsed < LIMIT && race.human.finish === null) {
     elapsed += dt * 1000;
-    race.step({ gas: true, brake: false, steer: clamp(-race.kart.lane * .35, -1, 1) }, dt, elapsed);
+    race.step({ gas: true, brake: false, steer: centerSteer(race.kart) }, dt, elapsed);
   }
   const finish = race.human.finish;
   assert.ok(finish !== null);
@@ -62,7 +63,6 @@ test('bots keep racing after the player finishes and results keep the player fir
   assert.equal(race.room.complete, true);
   assert.deepEqual(rank(race.room.drivers), [race.human, bot]);
 });
-
 test('all difficulties finish every track, with Hard recording the quickest lap times', () => {
   for (const id of TRACK_IDS) {
     const track = getTrack(id);
@@ -158,4 +158,29 @@ test('Hard defends earlier against a closing rival but does not cut off a kart a
   const occupied = new BotPilot(track, 0, 'Hard').input(kart, 5000, [rival, adjacent]);
   assert.ok(defend.steer > open.steer + .25);
   assert.ok(occupied.steer < defend.steer - .25);
+});
+test('local race simulates the same distance at 15 and 60 frames per second', () => {
+  function afterTenSeconds(fps: number) {
+    const race = new LocalRace(2, 0);
+    for (let frame = 1; frame <= 10 * fps; frame++) {
+      race.step({ ...idle, gas: true }, 1 / fps, frame * 1000 / fps);
+    }
+    return race.room.drivers.map(entry => entry.pose);
+  }
+  const slow = afterTenSeconds(15), fast = afterTenSeconds(60);
+  for (const [i, [progress, ...rest]] of slow.entries()) {
+    const [fastProgress, ...fastRest] = fast[i];
+    assert.ok(Math.abs(progress - fastProgress) * LENGTH < .001);
+    assert.deepEqual(rest, fastRest);
+  }
+});
+
+test('the local grid separates the player and a bot placed side by side', () => {
+  const race = new LocalRace(2, 0);
+  const bot = race.room.drivers[0];
+  Object.assign(race.kart, { s: bot.pose[0], lane: bot.pose[1] + 1 });
+  race.step(idle, dt, dt * 1000);
+  assert.ok(race.kart.lane > bot.pose[1] + 2.6);
+  assert.ok(bot.pose[1] < -2.8);
+  assert.ok(point(race.kart.s, race.kart.lane).distanceTo(point(bot.pose[0], bot.pose[1])) > 2.6);
 });

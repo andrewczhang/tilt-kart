@@ -1,5 +1,5 @@
 import * as T from 'three';
-import { COLORS, RED_BASIN, SAMPLES, clamp, delta, wrap, type Circuit } from './circuit';
+import { COLORS, RED_BASIN, SAMPLES, type Circuit } from './circuit';
 import { PAD_LENGTH, PAD_WIDTH, type Pose } from './drive';
 import type { PowerupState } from './powerups';
 import { PowerupScene } from './powerups-scene';
@@ -94,11 +94,12 @@ function circuit(scene: T.Group, track: Circuit) {
   arch.position.copy(point(0));
   arch.rotation.y = frame(0).heading;
   const paint = flat(track.curb);
+  const beamHeight = 9.6;
   for (const x of [-edge - .5, edge + .5]) {
-    block(arch, navy, x, 2.3, 0, .7, 6, .75);
-    block(arch, paint, x, 2.6, -.41, .3, 4.8, .13);
+    block(arch, navy, x, 4.4, 0, .7, beamHeight, .75);
+    block(arch, paint, x, 4.5, -.41, .3, 8.3, .13);
   }
-  block(arch, navy, 0, 5.4, 0, track.width + 1.8, 2.1, .9);
+  block(arch, navy, 0, beamHeight, 0, track.width + 1.8, 2.1, .9);
   const canvas = document.createElement('canvas');
   canvas.width = 1024; canvas.height = 128;
   const ctx = canvas.getContext('2d')!;
@@ -107,7 +108,7 @@ function circuit(scene: T.Group, track: Circuit) {
   ctx.fillText(`${track.name.toUpperCase()}   /   ${String(TRACK_IDS.indexOf(track.id) + 1).padStart(2, '0')}`, 512, 94, 956);
   const tex = new T.CanvasTexture(canvas); tex.colorSpace = T.SRGBColorSpace;
   const sign = new T.Mesh(new T.PlaneGeometry(track.width + .5, 1.72), new T.MeshBasicMaterial({ map: tex, side: T.DoubleSide }));
-  sign.position.set(0, 5.4, -.46); sign.rotation.y = Math.PI; arch.add(sign);
+  sign.position.set(0, beamHeight, -.46); sign.rotation.y = Math.PI; arch.add(sign);
   scene.add(arch);
 }
 
@@ -205,7 +206,7 @@ export class View {
   private readonly scene = new T.Scene();
   private readonly camera = new T.PerspectiveCamera(58, 1, .15, 560);
   private readonly models = new Map<string, ReturnType<typeof kart>>();
-  private readonly focus = new T.Vector3();
+  private followDistance = 10.5;
   private readonly labels = new Map<string, HTMLSpanElement>();
   private world?: T.Group;
   private track = RED_BASIN;
@@ -253,7 +254,7 @@ export class View {
     const { frame, point } = this.track;
     const width = this.canvas.clientWidth, height = this.canvas.clientHeight;
     const aspect = width / Math.max(1, height);
-    const fov = aspect < 1 ? 75 : 59;
+    const fov = aspect < 1 ? 75 : menu ? 59 : 63;
     if (this.camera.aspect !== aspect || this.camera.fov !== fov || this.canvas.width !== Math.floor(width * this.renderer.getPixelRatio()) || this.canvas.height !== Math.floor(height * this.renderer.getPixelRatio())) {
       this.renderer.setSize(width, height, false);
       this.camera.aspect = aspect;
@@ -288,17 +289,24 @@ export class View {
     }
     this.powerupScene.update(powerups, this.models, menu);
     const [s, lane, , speed, , boost] = local;
-    const soft = menu || this.resetCamera ? 1 : clamp(dt * 7.5, 0, 1);
+    if (menu) {
+      const heading = frame(s - .005).heading;
+      this.camera.position.copy(point(s, lane - 10, 7.5));
+      this.camera.position.x -= Math.sin(heading) * 13;
+      this.camera.position.z -= Math.cos(heading) * 13;
+      this.camera.lookAt(point(s + .014, lane + 8, 1));
+      this.followDistance = 10.5;
+    } else {
+      const targetDistance = 10.5 + speed * .055 + (boost > 0 ? 1.1 : 0);
+      this.followDistance += (targetDistance - this.followDistance) * (this.resetCamera ? 1 : 1 - Math.exp(-dt * 8));
+      const eye = point(s - this.followDistance / this.track.length, lane * .75, 6.1);
+      const focus = point(s, lane, .7);
+      const ahead = new T.Vector3(focus.x - eye.x, 0, focus.z - eye.z).normalize();
+      focus.addScaledVector(ahead, 3.8);
+      this.camera.position.copy(eye);
+      this.camera.lookAt(focus);
+    }
     this.resetCamera = false;
-    const here = frame(s), behind = frame(s - .011);
-    const heading = here.heading + delta(behind.heading - here.heading, Math.PI * 2) * .48;
-    const eye = point(s, menu ? lane - 10 : lane * .78, menu ? 7.5 : 5.4);
-    const back = menu ? 13 : 8.1 + speed * .058 + (boost > 0 ? 1.4 : 0);
-    eye.x -= Math.sin(heading) * back; eye.z -= Math.cos(heading) * back;
-    const look = point(wrap(s + (menu ? .014 : .016)), menu ? lane + 8 : lane * .46, menu ? 1 : 1.35);
-    this.camera.position.lerp(eye, soft);
-    this.focus.lerp(look, soft);
-    this.camera.lookAt(this.focus);
     this.renderer.render(this.scene, this.camera);
     for (const [id, label] of this.labels) {
       const pos = this.models.get(id)!.root.position.clone(); pos.y += 2.18;
