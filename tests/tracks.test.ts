@@ -40,7 +40,7 @@ test('eight circuits have separate drivable closed courses, checkpoints and pads
       }
     }
     let updates = 0;
-    while (kart.s < LAPS && updates++ < 10800) {
+    while (d.finish === null && kart.s < LAPS && updates++ < 10800) {
       const steer = centerSteer(kart, track);
       drive(kart, { steer, brake: false, gas: true }, 1 / 60, track);
       if (updates % 4 === 0 || kart.s >= LAPS) {

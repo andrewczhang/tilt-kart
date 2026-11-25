@@ -142,7 +142,7 @@ function integrate(k: Kart, input: Input, dt: number, track: Circuit, items: boo
     k.slipAngle = 0;
     k.recovery = 0;
     k.brakeHeld = input.brake;
-    k.speed = flight || Math.max(6, k.speed - 24 * dt);
+    k.speed = Math.max(6, k.speed - 24 * dt);
     const next = k.s + (flight || k.speed * track.progressScale(k.s, k.lane)) * dt / track.length;
     const [left, right] = track.laneBounds(next, k.lane, k.s, k.lane);
     k.lane = clamp(k.lane, left + .85, right - .85);
@@ -164,7 +164,7 @@ function integrate(k: Kart, input: Input, dt: number, track: Circuit, items: boo
   const surface = flight ? .22 : track.surfaceAt(k.s, k.lane);
   const slope = flight ? 0 : track.gradeAt(k.s);
   const accel = input.brake && !slip ? -27 * surface : starred ? 32 - k.speed * .25 : boosting || input.gas || slip ? 24 - k.speed * .29 : -8;
-  k.speed = flight || clamp(k.speed + (accel - slope * 18) * dt, 0, Math.min(items ? Infinity : BOOST_SPEED, Math.max(k.speed - (slip ? 9 : 15) * dt, max)));
+  k.speed = clamp(k.speed + (accel - slope * 18) * dt, 0, Math.min(items ? Infinity : BOOST_SPEED, Math.max(k.speed - (slip ? 9 : 15) * dt, max)));
   k.turbo = Math.max(0, k.turbo - dt);
   k.boost = Math.max(0, k.boost - dt);
   const previous = k.s, previousLane = k.lane;

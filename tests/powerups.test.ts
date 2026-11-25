@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { LENGTH, WIDTH } from '../src/circuit';
+import { getTrack, LENGTH, WIDTH } from '../src/circuit';
 import { drive, grid, pose } from '../src/drive';
 import {
   BOX_RESPAWN,
@@ -99,6 +99,40 @@ test('turbo boost accelerates past normal top speed and remains valid in server 
   assert.ok(p[3] > 56 && p[3] <= 62);
   assert.ok(validPose(p));
   assert.ok(advance(d, p, 5000, 20 / 60));
+});
+
+test('turbo, star, and item hits carry their speed effects through landing', () => {
+  const track = getTrack('saltwater');
+  const { start, end } = track.jumps![0];
+  const initial = (start + end) / 2, dt = 1 / 60;
+  const landing = (kart: ReturnType<typeof grid>) => {
+    let frames = 0;
+    while (track.gapAt(kart.s) && frames < 60) {
+      drive(kart, { steer: 0, brake: false, gas: true }, dt, track);
+      frames++;
+    }
+    assert.ok(kart.s >= end - 1e-10);
+    return frames;
+  };
+  const normal = Object.assign(grid(0, track), { s: initial, lane: 0, speed: 42 });
+  const airtime = landing(normal);
+  for (const item of ['turbo', 'star'] as const) {
+    const state = new PowerupState();
+    const kart = Object.assign(grid(0, track), { s: initial, lane: 0, speed: 42 });
+    state.held = item;
+    assert.equal(state.useItem('p1', kart, [], {}, track), item);
+    assert.equal(landing(kart), airtime);
+    assert.ok(kart.speed > normal.speed + 8, item);
+    drive(kart, { steer: 0, brake: false, gas: true }, dt, track);
+    assert.ok(kart.speed > 50, item);
+  }
+  const state = new PowerupState();
+  const hit = Object.assign(grid(0, track), { s: initial, lane: 0, speed: 42 });
+  state.hazards.push({ id: 'peel', owner: 'p2', kind: 'banana', s: initial, lane: 0, age: 1, ttl: 20 });
+  state.step(dt, 'p1', hit, [], 1, 2, false, {}, Math.random, track);
+  assert.ok(hit.spin > 0 && hit.speed <= 14);
+  assert.equal(landing(hit), airtime);
+  assert.ok(hit.speed <= 14);
 });
 
 test('banana peel spins out a kart that drives over it unless starred', () => {
