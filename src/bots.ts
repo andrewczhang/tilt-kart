@@ -1,15 +1,16 @@
 import { COLORS, LAPS, LIMIT, RED_BASIN, clamp, delta, getTrack, mix, wrap, type Circuit } from './circuit';
 import { bump, drive, grid, pose, substep, type Input, type Kart } from './drive';
 import { cupTrack, scoreRound, type Cup } from './cups';
-import { advance, driver, type Driver, type RoomState } from './rules';
+import { advance, driver, rank, type Driver, type RoomState } from './rules';
+import { type ItemBox, type LocalItemRacer, type PowerupCallbacks, type PowerupId, type PowerupState } from './powerups';
 
 export const MAX_RACERS = COLORS.length;
 export const DIFFICULTIES = ['Easy', 'Normal', 'Hard'] as const;
 export type Difficulty = typeof DIFFICULTIES[number];
 const tuning = {
-  Easy: { pace: 32, line: .53, error: 1.25, reaction: .42, drift: .70, pads: .1 },
-  Normal: { pace: 38, line: .83, error: .65, reaction: .21, drift: .52, pads: .57 },
-  Hard: { pace: 42.5, line: 1, error: .23, reaction: .10, drift: .40, pads: 1 },
+  Easy: { pace: 32, line: .53, error: 1.25, reaction: .42, drift: .70, pads: .1, boxes: 1.2 },
+  Normal: { pace: 38, line: .83, error: .65, reaction: .21, drift: .52, pads: .57, boxes: 2.3 },
+  Hard: { pace: 42.5, line: 1, error: .23, reaction: .10, drift: .40, pads: 1, boxes: 3.6 },
 } satisfies Record<Difficulty, Record<string, number>>;
 const names = ['Comet', 'Dusty', 'Nitro', 'Swerve', 'Blaze', 'Dash', 'Drift'];
 const CREEP_CLEARANCE = 2.5;
@@ -41,6 +42,9 @@ function lineAt(line: LineSample[], s: number) {
 
 type Rival = { id: string; gap: number; lane: number; speed: number };
 type Maneuver = { kind: 'pass' | 'defend'; rival: string; lane: number; until: number };
+type ItemOptions = { boxes: readonly ItemBox[]; held?: PowerupId | null; rolling: boolean; rand: () => number };
+type BotInput = Input & { useItem?: boolean };
+type RaceItems = { state: PowerupState; usePlayerItem?: boolean; callbacks?: PowerupCallbacks; rand?: () => number };
 
 export class BotPilot {
   private readonly skill;
@@ -54,6 +58,7 @@ export class BotPilot {
   private decideAt = 0;
   private defendAt = 0;
   private defended?: string;
+  private itemAt = 0;
 
   constructor(private readonly track: Circuit, private readonly slot: number, readonly difficulty: Difficulty) {
     this.skill = tuning[difficulty];
@@ -130,7 +135,48 @@ export class BotPilot {
     return { target, pace, maxProgress, following: maxProgress === undefined && !!front && front.gap < 4.2 && kart.speed > front.speed + 2.5 };
   }
 
-  input(kart: Kart, elapsed: number, racers: Driver[]): Input {
+  private boxLane(kart: Kart, lineTarget: number, severity: number, rivals: Rival[], items: ItemOptions) {
+    if (items.held || items.rolling || this.maneuver || kart.spin > 0 || severity > .86) return;
+    const budget = this.skill.boxes * (1 - severity * .6);
+    const range = 17 + this.skill.boxes * 4;
+    let bestCost = Infinity;
+    let lane: number | undefined;
+    for (const box of items.boxes) {
+      const gap = delta(box.s - kart.s) * this.track.length;
+      if (box.cooldown > 0 || gap < -2 || gap > range || Math.abs(box.lane) > this.safeLane) continue;
+      const shift = Math.abs(box.lane - kart.lane);
+      const cost = Math.abs(box.lane - lineTarget) + .3 * shift;
+      if (cost > budget || cost >= bestCost || shift > 1.6 + Math.max(gap, 0) * .18 || !this.canShift(kart, box.lane, rivals)) continue;
+      bestCost = cost;
+      lane = box.lane;
+    }
+    return lane;
+  }
+
+  private shouldUseItem(kart: Kart, time: number, racers: Driver[], severity: number, blocked: boolean, items: ItemOptions) {
+    if (!items.held || kart.spin > 0) return false;
+    if (this.difficulty === 'Easy') {
+      if (time < this.itemAt) return false;
+      this.itemAt = time + .8;
+      return items.rand() < .4;
+    }
+    if (items.held === 'turbo' || items.held === 'star') {
+      return !blocked && kart.star <= 0 && kart.boost < .2 && Math.abs(kart.yaw) < .24
+        && (severity < .42 || kart.speed < 19);
+    }
+    return racers.some(racer => {
+      if (racer.slot === this.slot || racer.finish !== null || !racer.online) return false;
+      const gap = delta(racer.pose[0] - kart.s) * this.track.length;
+      const offset = racer.pose[1] - kart.lane;
+      if (items.held === 'banana') return gap < -3 && gap > -13 && Math.abs(offset) < 1.7;
+      if (items.held === 'homing') return gap > Math.max(3, .004 * this.track.length) && gap < 100;
+      if (gap < 4 || gap > 36) return false;
+      const intercept = (gap - 2.8) / (72 - racer.pose[3]);
+      return Math.abs(offset - kart.steer * 6 * intercept) < 1.5;
+    });
+  }
+
+  input(kart: Kart, elapsed: number, racers: Driver[], items?: ItemOptions): BotInput {
     const { track, skill, line, phase, slot, safeLane } = this;
     const time = elapsed / 1000;
     const look = kart.s + (3 + kart.speed * .12) / track.length;
@@ -148,6 +194,8 @@ export class BotPilot {
     const mistake = Math.max(0, Math.sin(time * .91 + phase) - .86) * skill.error * 30;
     const desiredPace = skill.pace - slot * .21 - severity * (this.difficulty === 'Hard' ? 2.8 : 4.6) - mistake;
     const rivals = this.traffic(kart, racers);
+    const boxLane = items && this.boxLane(kart, lineTarget, severity, rivals, items);
+    if (boxLane !== undefined) lineTarget = boxLane;
     const { target, pace, following, maxProgress } = this.position(kart, time, clamp(lineTarget, -safeLane, safeLane), desiredPace, rivals);
     const herePoint = track.point(kart.s, kart.lane);
     const lookahead = this.maneuver ? 4 + kart.speed * .08 : 5 + kart.speed * .22;
@@ -157,19 +205,21 @@ export class BotPilot {
     let steer = clamp(error * 3, -1, 1);
     const direction = Math.sign(here.bend);
     const space = safeLane - kart.lane * direction;
-    const startingDrift = !this.maneuver && !following && time >= this.driftReady && kart.boost === 0 && kart.speed >= 28
+    const startingDrift = boxLane === undefined && !this.maneuver && !following && time >= this.driftReady && kart.boost === 0 && kart.speed >= 28
       && Math.abs(here.bend) >= skill.drift && steer * direction > .29 && space > 4.1;
     if (startingDrift) {
       this.driftSign = direction;
       this.driftUntil = time + .47;
       this.driftReady = time + 2.5;
     }
-    const drifting = !this.maneuver && !following && time < this.driftUntil && safeLane - kart.lane * this.driftSign > 1.05
+    const drifting = boxLane === undefined && !this.maneuver && !following && time < this.driftUntil && safeLane - kart.lane * this.driftSign > 1.05
       && this.canShift(kart, kart.lane + this.driftSign * 2.2, rivals);
     if (drifting) steer = this.driftSign * clamp(steer * this.driftSign, .27, .52);
     else this.driftUntil = 0;
     const heavyBrake = severity > 1.08 && kart.speed > pace + 5 && Math.abs(steer) < .22;
-    return { steer: following ? clamp(steer, -.19, .19) : steer, gas: kart.speed < pace, brake: following || drifting || heavyBrake, maxProgress };
+    const blocked = following || drifting || maxProgress !== undefined || rivals.some(r => r.gap > 0 && r.gap < 7 && Math.abs(r.lane - kart.lane) < 2.2);
+    const useItem = items && this.shouldUseItem(kart, time, racers, severity, blocked, items);
+    return { steer: following ? clamp(steer, -.19, .19) : steer, gas: kart.speed < pace, brake: following || drifting || heavyBrake, maxProgress, useItem };
   }
 }
 
@@ -202,29 +252,25 @@ export class LocalRace {
     this.room = { host: this.human.id, start, complete: false, track: track.id, cup, drivers: this.field.map(racer => racer.entry) };
   }
 
-  hitBot(id: string, duration = 1.15) {
-    const bot = this.field.find(({ entry }) => entry !== this.human && entry.id === id);
-    if (!bot || bot.kart.spin > 0) return;
-    bot.kart.spin = duration;
-    bot.kart.boost = 0;
-    bot.kart.turbo = 0;
-    bot.kart.drift = 0;
-    bot.kart.speed = Math.min(bot.kart.speed, 14);
-  }
-
-  step(input: Input, dt: number, elapsed: number) {
+  step(input: Input, dt: number, elapsed: number, items?: RaceItems) {
     if (elapsed < 0 || this.room.complete) return false;
     const end = Math.min(elapsed, LIMIT);
     const raceDt = Math.max(0, Math.min(dt, (end - Math.max(0, elapsed - dt * 1000)) / 1000));
     let changed = false;
+    const rand = items?.rand ?? Math.random;
+    let usePlayerItem = items?.usePlayerItem;
     let time = end - raceDt * 1000;
     substep(raceDt, step => {
       time += step * 1000;
       const racing = this.field.filter(({ entry }) => entry.finish === null);
-      const before = racing.map(({ kart, pilot }) => {
-        const s = kart.s;
-        drive(kart, pilot?.input(kart, time, this.room.drivers) ?? input, step, this.track);
-        return s;
+      const frames = racing.map(({ kart, pilot, entry }) => {
+        const inventory = items?.state.botInventory(entry.id);
+        const controls = pilot?.input(kart, time, this.room.drivers, items && {
+          boxes: items.state.boxes, held: inventory?.held, rolling: !!inventory?.rolling, rand,
+        });
+        const before = { s: kart.s, lane: kart.lane };
+        drive(kart, controls ?? input, step, this.track);
+        return { entry, kart, before, useItem: controls?.useItem };
       });
       for (let i = 0; i < racing.length; i++) {
         for (let j = i + 1; j < racing.length; j++) {
@@ -232,12 +278,30 @@ export class LocalRace {
           if (a.star <= 0 && b.star <= 0) bump(a, b, this.track);
         }
       }
-      for (const [i, { entry, kart }] of racing.entries()) {
-        if (judgeRacer(entry, kart, before[i], step, time, this.track)) changed = true;
+      for (const { entry, kart, before } of frames) {
+        if (judgeRacer(entry, kart, before.s, step, time, this.track)) changed = true;
       }
+      if (items) this.stepItems(items, frames, step, rand, usePlayerItem);
+      usePlayerItem = false;
     });
     this.room.complete = elapsed >= LIMIT || this.room.drivers.every(entry => entry.finish !== null);
     if (this.room.complete && this.room.cup) this.room.cup = scoreRound(this.room.cup, this.room.drivers);
     return changed || this.room.complete;
+  }
+
+  private stepItems({ state, callbacks }: RaceItems, frames: { entry: Driver; kart: Kart; before: Pick<Kart, 's' | 'lane'>; useItem?: boolean }[],
+    dt: number, rand: () => number, usePlayerItem?: boolean) {
+    const { drivers } = this.room;
+    const positions = new Map(rank(drivers).map((driver, i) => [driver.id, i + 1]));
+    const playerActive = this.human.finish === null;
+    const bots: LocalItemRacer[] = [];
+    for (const { entry, kart, before, useItem } of frames) {
+      if (entry === this.human || entry.finish !== null) continue;
+      bots.push({ id: entry.id, kart, before, place: positions.get(entry.id)! });
+      if (useItem) state.useBotItem(entry.id, kart, drivers, this.track);
+    }
+    if (playerActive && usePlayerItem) state.useItem(this.human.id, this.kart, drivers, callbacks, this.track);
+    state.step(dt, this.human.id, this.kart, drivers, positions.get(this.human.id)!, this.racers, this.racers === 1,
+      callbacks, rand, this.track, frames.find(({ entry }) => entry === this.human)?.before, { playerActive, bots });
   }
 }

@@ -276,3 +276,38 @@ test('spectator stepping advances projectiles, box cooldowns, and effects', () =
   assert.ok(state.boxes[0].cooldown < 6);
   assert.ok(state.fxOf('p1').star < 5.5);
 });
+
+test('the same player peel spins an unprotected bot like a human but cannot hurt a starred bot', () => {
+  for (const victimId of ['human', 'bot-0']) {
+    for (const star of [0, 3]) {
+      const state = new PowerupState();
+      const victim = { ...grid(1), s: .4, lane: 0, star, speed: 40, boost: 1, turbo: 1, drift: .5 };
+      const attacker = { ...grid(0), s: .4 + 3.2 / LENGTH, lane: 0 };
+      state.held = 'banana';
+      state.useItem('attacker', attacker, []);
+      const botVictim = victimId === 'bot-0';
+      const player = botVictim ? attacker : victim;
+      state.step(1 / 60, botVictim ? 'attacker' : victimId, player, [], 1, 2, false, {}, () => 0,
+        undefined, undefined, { playerActive: true, bots: botVictim ? [{ id: victimId, kart: victim, place: 2 }] : [] });
+      assert.equal(state.hazards.length, 0);
+      assert.deepEqual([victim.spin, victim.speed, victim.boost, victim.turbo, victim.drift], star ? [0, 40, 1, 1, .5] : [1.15, 14, 0, 0, 0]);
+      assert.equal(state.fxOf(victimId).star, star);
+      assert.equal(state.fxOf(victimId).spin, victim.spin);
+    }
+  }
+});
+
+test('a starred bot bumps the player and other bots but not another starred kart', () => {
+  const state = new PowerupState();
+  const player = { ...grid(0), s: .4, lane: 0, speed: 38 };
+  const star = { ...player, star: 3 };
+  const bot = { ...player, lane: .5 };
+  const protectedBot = { ...player, lane: -.5, star: 2 };
+  const bots = [star, bot, protectedBot].map((kart, i) => ({ id: `bot-${i}`, kart, place: i + 2 }));
+  state.step(1 / 60, 'player', player, [], 1, 4, false, {}, () => 0, undefined, undefined, { playerActive: true, bots });
+  assert.equal(player.spin, 1.15);
+  assert.equal(bot.spin, 1.15);
+  assert.equal(star.spin, 0);
+  assert.equal(protectedBot.spin, 0);
+  assert.equal(state.banner?.text, 'BUMPED BY STAR');
+});

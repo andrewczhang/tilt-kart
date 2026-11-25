@@ -776,12 +776,15 @@ function tick(now: number) {
     const me = room.drivers.find(d => d.id === player);
     const canDrive = screen === 'race' && me?.finish === null && !room.complete && local.s < LAPS;
     const active = canDrive && elapsed >= 0 && elapsed < LIMIT;
+    const localItemsActive = localRace && elapsed >= 0 && !room.complete;
     if (active && starting) { starting = false; touch.calibrate(); }
     const before = local.s;
     const beforeLane = local.lane;
     const frameRaceDt = clamp((Math.min(elapsed, LIMIT) - Math.max(0, elapsed - dt * 1000)) / 1000, 0, dt);
     if (localRace) {
-      const changed = localRace.step(touch.input(), dt, elapsed);
+      const changed = localRace.step(touch.input(), dt, elapsed, {
+        state: powerups, callbacks: powerupCallbacks, usePlayerItem: active && touch.consumeItem(),
+      });
       if (screen === 'results' && changed) {
         if (room.complete && room.cup) results();
         else updateResults();
@@ -820,13 +823,10 @@ function tick(now: number) {
     });
     const current = room.drivers.map(d => d.id === player ? { ...d, pose: mine } : d);
     const place = rank(current).findIndex(d => d.id === player) + 1;
-    if (active) {
-      const callbacks: PowerupCallbacks = localRace
-        ? { ...powerupCallbacks, onActorHit: actorId => localRace!.hitBot(actorId) }
-        : powerupCallbacks;
-      if (touch.consumeItem()) powerups.useItem(player, local, visible, callbacks, track);
-      powerups.step(dt, player, local, visible, place, room.drivers.length, localRace?.racers === 1, callbacks, Math.random, track, { s: before, lane: beforeLane });
-    } else if (room.start !== null) {
+    if (!localRace && active) {
+      if (touch.consumeItem()) powerups.useItem(player, local, visible, powerupCallbacks, track);
+      powerups.step(dt, player, local, visible, place, room.drivers.length, false, powerupCallbacks, Math.random, track, { s: before, lane: beforeLane });
+    } else if (!localItemsActive) {
       powerups.stepSpectator(dt, visible, track);
     }
     const updatedMine = pose(local);
