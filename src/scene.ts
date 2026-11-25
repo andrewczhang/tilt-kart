@@ -1,6 +1,6 @@
 import * as T from 'three';
 import { COLORS, WIDTH, SAMPLES, clamp, delta, frame, point, wrap } from './circuit';
-import { PADS, type Pose } from './drive';
+import { PADS, PAD_LENGTH, PAD_WIDTH, type Pose } from './drive';
 
 const flat = (color: T.ColorRepresentation) => new T.MeshLambertMaterial({ color, flatShading: true });
 const asphalt = flat('#3b444d'), white = flat('#f7e6c9'), coral = flat('#e94d30'), navy = flat('#222b36');
@@ -76,7 +76,7 @@ function circuit(scene: T.Scene) {
     const g = new T.Group();
     g.position.copy(point(pad.s, pad.lane, .044));
     g.rotation.set(0, f.heading, Math.atan(f.bank), 'YXZ');
-    block(g, blue, 0, 0, 0, 3.3, .04, 4.4);
+    block(g, blue, 0, 0, 0, PAD_WIDTH, .04, PAD_LENGTH);
     for (let i = -1; i <= 1; i++) {
       block(g, white, -.56, .033, i * 1.2, 1.35, .03, .2).rotation.y = -.45;
       block(g, white, .56, .033, i * 1.2, 1.35, .03, .2).rotation.y = .45;

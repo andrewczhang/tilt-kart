@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { LAPS, LENGTH, SECTORS, WIDTH, delta, frame, point } from '../src/circuit';
-import { PADS, drive, grid, pose } from '../src/drive';
+import { PADS, PAD_LENGTH, PAD_WIDTH, drive, grid, pose } from '../src/drive';
 import { advance, driver, rank, validPose } from '../src/rules';
 
 test('the elevated and banked track joins at the finish line', () => {
@@ -38,14 +38,30 @@ test('a boost accelerates a coasting kart without throttle', () => {
 
 test('boost pads work only within their lane and the wall costs speed', () => {
   const pad = PADS[0], kart = grid(0);
-  Object.assign(kart, { s: pad.s - .0001, lane: pad.lane, speed: 42 });
+  const approach = pad.s - (PAD_LENGTH / 2 + .1) / LENGTH;
+  Object.assign(kart, { s: approach, lane: pad.lane, speed: 42 });
   drive(kart, { steer: 0, brake: false, gas: true }, 1 / 60);
   assert.ok(kart.boost > 1);
-  Object.assign(kart, { s: pad.s - .0001, lane: 7.1, speed: 42, boost: 0, steer: 1 });
+  Object.assign(kart, { s: approach, lane: 7.1, speed: 42, boost: 0, steer: 1 });
   drive(kart, { steer: 1, brake: false, gas: true }, 1 / 60);
   assert.equal(kart.boost, 0);
   assert.ok(kart.lane <= WIDTH / 2 - .85);
   assert.ok(kart.speed < 42);
+});
+
+test('a boost pad triggers on side entry past its center but not beyond its trailing edge', () => {
+  const pad = PADS[0], kart = grid(0);
+  const input = { steer: 1, brake: false, gas: true };
+  const side = { lane: pad.lane - PAD_WIDTH / 2 - .02, speed: 32, steer: 1 };
+  Object.assign(kart, side, { s: pad.s + .5 / LENGTH });
+  drive(kart, input, 1 / 60);
+  const entering = kart.boost;
+  assert.ok(entering > 1);
+  drive(kart, input, 1 / 60);
+  assert.ok(kart.boost < entering);
+  Object.assign(kart, side, { s: pad.s + (PAD_LENGTH / 2 + .1) / LENGTH, boost: 0 });
+  drive(kart, input, 1 / 60);
+  assert.equal(kart.boost, 0);
 });
 
 test('room judges from the ordered checkpoints and rejects implausible poses', () => {
