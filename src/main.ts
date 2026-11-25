@@ -5,6 +5,7 @@ import { COLORS, COUNTDOWN, LAPS, LIMIT, clamp, getTrack } from './circuit';
 import { Controls } from './controls';
 import { drive, grid, pose, type Kart, type Pose } from './drive';
 import { RaceMusic } from './music';
+import { POWERUPS, PowerupState, type ItemEvent, type PowerupCallbacks, type PowerupId } from './powerups';
 import { readPreference, writePreference } from './preferences';
 import { rank, type Driver, type RoomState, type ServerMessage } from './rules';
 import { View } from './scene';
@@ -34,12 +35,14 @@ let view: View;
 let practiceTrack: TrackId = DEFAULT_TRACK;
 let track = getTrack();
 const remotes = new Map<string, Pose>();
+const powerups = new PowerupState();
+let lastItemKey = '';
 const show = (html: string) => { ui.innerHTML = html; };
 const button = (id: string, label: string, alt = false) => `<button id="${id}" class="action${alt ? ' alt' : ''}" type="button">${label}</button>`;
 const doOn = (id: string, fn: () => void) => { $(id).onclick = fn; };
 const identity = '<p class="identity">Tilt Kart</p>';
 const tokenKey = () => `tilt-kart-room-${code}`;
-const notes = () => touch.touch ? 'Rotate to landscape. Hold your phone like a wheel. Automatic throttle.' : 'Drive with WASD or arrow keys. Brake with S, ↓ or Space. Hold brake and turn to drift; release for a boost.';
+const notes = () => touch.touch ? 'Rotate to landscape. Hold your phone like a wheel. Automatic throttle. Tap the item box for power-ups.' : 'Drive with WASD or arrow keys. Brake with S, ↓ or Space. Hold brake and turn to drift; press E or Enter for power-ups.';
 const phoneSetup = () => touch.touch ? `<div class="phone-setup">
   <p class="rotate">Turn sideways for a wider view.</p>
   ${button('tilt', 'Enable tilt', true)}<p id="tilt-status" role="status">Tilt or use Left / Right to steer.</p>
@@ -254,6 +257,8 @@ async function connect(name: string) {
           Object.assign(d, { pose: message.pose, checkpoint: message.checkpoint, finish: message.finish });
           if (screen === 'results' && message.finish !== null) updateResults();
         }
+      } else if (message.type === 'item') {
+        powerups.applyRemote(message.from, message.event);
       }
     };
     ws.onclose = e => {
@@ -328,6 +333,8 @@ function resetRace(me?: Driver) {
   starting = true;
   followed = '';
   remotes.clear();
+  powerups.reset();
+  lastItemKey = '';
 }
 
 function spectate() {
@@ -350,10 +357,11 @@ function begin() {
       <div class="hud-box"><small>Place</small><em id="place">1/${room!.drivers.length}</em></div>
       <div class="hud-box"><small>km/h</small><em id="speed">0</em></div>
       <div class="hud-box race-clock"><small>Race time</small><em id="elapsed">0:00.00</em><small id="remaining">3:00 left</small></div>
+      <button class="hud-box item-slot" id="item-slot" type="button" aria-label="Use power-up"><small id="item-hint">Item</small><span id="item-icon" class="item-icon">?</span><b id="item-name">Empty</b></button>
       <canvas id="map" class="map" width="160" height="130" aria-label="${track.name} circuit map"></canvas>
     </div>
     <div class="hud-actions"><button class="tool" id="tilt"${touch.touch ? '' : ' hidden'}>Enable tilt</button><button class="tool" id="music"></button><button class="tool" id="sound"></button><button class="tool" id="exit">Exit</button></div>
-    <div class="status" id="status" role="status"></div>
+    <div class="status" id="status" role="status"></div><div class="item-banner" id="item-banner" role="status"></div>
     ${touch.touch ? '<p class="race-tilt-status" id="tilt-status" role="status"></p>' : ''}
     <div class="boost" aria-label="Drift boost"><i id="boost"></i></div>
     <div class="touch"${touch.touch ? '' : ' hidden'}><button id="left">Left</button><button id="right">Right</button><button id="brake">Brake / Drift</button></div>
@@ -364,6 +372,15 @@ function begin() {
   touch.bindTouch();
   touch.calibrate();
   bindTilt();
+  const itemBtn = $('item-slot');
+  itemBtn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    touch.queueItem();
+    itemBtn.blur();
+  });
+  itemBtn.addEventListener('click', e => {
+    if (e.detail === 0) touch.queueItem();
+  });
   const hudAction = (id: string, action: () => void) => doOn(id, () => {
     $(id).blur();
     action();
@@ -422,6 +439,48 @@ function set(id: string, value: string) {
   if (el && el.textContent !== value) el.textContent = value;
 }
 
+function updateItemHud() {
+  const item: PowerupId | null = powerups.displayItem;
+  const rolling = powerups.rolling !== null;
+  const key = `${item ?? 'none'}:${rolling ? 1 : 0}:${touch.touch ? 1 : 0}`;
+  if (key !== lastItemKey) {
+    lastItemKey = key;
+    const slot = $('item-slot');
+    slot.classList.toggle('rolling', rolling);
+    slot.classList.toggle('ready', !rolling && item !== null);
+    if (item) {
+      const meta = POWERUPS[item];
+      slot.style.setProperty('--item-color', meta.color);
+      $('item-icon').innerHTML = meta.svg;
+      $('item-name').textContent = meta.label;
+      $('item-hint').textContent = rolling ? 'Rolling' : touch.touch ? 'Tap' : 'E / Enter';
+    } else {
+      slot.style.removeProperty('--item-color');
+      $('item-icon').textContent = '?';
+      $('item-name').textContent = 'Empty';
+      $('item-hint').textContent = 'Item';
+    }
+  }
+  const banner = $('item-banner');
+  if (powerups.banner) {
+    if (banner.textContent !== powerups.banner.text) banner.textContent = powerups.banner.text;
+    banner.style.setProperty('--banner-color', powerups.banner.color);
+    banner.classList.add('show');
+  } else {
+    banner.classList.remove('show');
+  }
+}
+
+const powerupCallbacks: PowerupCallbacks = {
+  emit(event: ItemEvent) {
+    if (!localRace && socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'item', event }));
+    }
+  },
+  sfx(kind) {
+    motor.sfx(kind);
+  }
+};
 let last = performance.now();
 function tick(now: number) {
   const dt = Math.min(.05, (now - last) / 1000);
@@ -448,13 +507,6 @@ function tick(now: number) {
       socket.send('status');
       checkedDeadline = room.start;
     }
-    if (!localRace && screen === 'race' && elapsed >= 0 && me?.finish === null) {
-      mine[0] = Math.min(mine[0], LAPS);
-      if (now - sent >= 55 && socket?.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify(mine)); sent = now;
-      }
-    }
-    if (screen === 'race' && (me?.finish != null || room.complete)) results();
     const visible = room.drivers.filter(d => d.online).map(d => {
       if (d.id === player) return { ...d, pose: mine };
       if (localRace) return d;
@@ -463,21 +515,40 @@ function tick(now: number) {
       remotes.set(d.id, p);
       return { ...d, pose: p };
     });
+    const current = room.drivers.map(d => d.id === player ? { ...d, pose: mine } : d);
+    const place = rank(current).findIndex(d => d.id === player) + 1;
+    if (active) {
+      const callbacks: PowerupCallbacks = localRace
+        ? { ...powerupCallbacks, onActorHit: actorId => localRace!.hitBot(actorId) }
+        : powerupCallbacks;
+      if (touch.consumeItem()) powerups.useItem(player, local, visible, callbacks, track);
+      powerups.step(dt, player, local, visible, place, room.drivers.length, localRace?.racers === 1, callbacks, Math.random, track);
+    } else if (room.start !== null) {
+      powerups.stepSpectator(dt, visible, track);
+    }
+    const updatedMine = pose(local);
+    if (!localRace && screen === 'race' && elapsed >= 0 && me?.finish === null) {
+      updatedMine[0] = Math.min(updatedMine[0], LAPS);
+      if (now - sent >= 55 && socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify(updatedMine)); sent = now;
+      }
+    }
+    if (screen === 'race' && (me?.finish != null || room.complete)) results();
     if (screen === 'race') {
-      const current = room.drivers.map(d => d.id === player ? { ...d, pose: mine } : d);
-      set('lap', `${Math.min(LAPS, 1 + Math.max(0, Math.floor(mine[0])))}/${LAPS}`);
+      set('lap', `${Math.min(LAPS, 1 + Math.max(0, Math.floor(updatedMine[0])))}/${LAPS}`);
       set('speed', String(Math.round(local.speed * 3.6)));
-      set('place', `${rank(current).findIndex(d => d.id === player) + 1}/${room.drivers.length}`);
+      set('place', `${place}/${room.drivers.length}`);
       set('elapsed', formatTime(clamp(elapsed, 0, LIMIT)));
       set('remaining', `${formatTime(Math.ceil((LIMIT - clamp(elapsed, 0, LIMIT)) / 1000) * 1000).split('.')[0]} left`);
       set('status', elapsed < 0 ? String(Math.min(3, Math.ceil(-elapsed / 1000))) : elapsed < 630 ? 'GO!' : '');
-      $('boost').style.transform = `scaleX(${local.boost > 0 ? clamp(local.boost / 1.5, 0, 1) : local.drift})`;
+      $('boost').style.transform = `scaleX(${local.star > 0 ? 1 : local.boost > 0 ? clamp(local.boost / 1.95, 0, 1) : local.drift})`;
+      updateItemHud();
     }
     if (screen === 'race' || screen === 'spectate') drawTrackMap($<HTMLCanvasElement>('map'), track, visible, player);
     motor.update(active || screen === 'race' && elapsed < 0 ? local : undefined);
     const target = !me ? visible.find(d => d.id === followed && d.finish === null) ?? visible.find(d => d.finish === null) ?? visible[0] : undefined;
     followed = target?.id ?? '';
-    view.render(target?.pose ?? mine, visible, player, dt);
+    view.render(target?.pose ?? updatedMine, visible, player, dt, false, powerups);
   } else {
     if (screen === 'controls' && localRace?.room.start != null) {
       localRace.step(touch.input(), dt, Date.now() - localRace.room.start);

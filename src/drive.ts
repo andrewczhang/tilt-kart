@@ -1,7 +1,7 @@
 import { clamp, delta, mix, RED_BASIN, type Circuit } from './circuit';
 import type { BoostPad } from './tracks';
 
-export type Kart = { s: number; lane: number; yaw: number; speed: number; drift: number; boost: number; steer: number; brakeHeld: boolean };
+export type Kart = { s: number; lane: number; yaw: number; speed: number; drift: number; boost: number; steer: number; brakeHeld: boolean; spin: number; star: number };
 export type Input = { steer: number; brake: boolean; gas: boolean };
 export type Pose = [s: number, lane: number, yaw: number, speed: number, drift: number, boost: number];
 export const PADS = RED_BASIN.pads;
@@ -9,7 +9,7 @@ export const PAD_WIDTH = 3.3;
 export const PAD_LENGTH = 4.4;
 
 export function grid(slot: number, track = RED_BASIN): Kart {
-  return { s: -(5 + Math.floor(slot / 2) * 5) / track.length, lane: slot % 2 ? 2.2 : -2.2, yaw: 0, speed: 0, drift: 0, boost: 0, steer: 0, brakeHeld: false };
+  return { s: -(5 + Math.floor(slot / 2) * 5) / track.length, lane: slot % 2 ? 2.2 : -2.2, yaw: 0, speed: 0, drift: 0, boost: 0, steer: 0, brakeHeld: false, spin: 0, star: 0 };
 }
 
 export function pose(k: Kart): Pose {
@@ -31,6 +31,17 @@ function entersPad(pad: BoostPad, previous: number, previousLane: number, k: Kar
 }
 
 export function drive(k: Kart, input: Input, dt: number, track = RED_BASIN) {
+  k.star = Math.max(0, k.star - dt);
+  if (k.spin > 0) {
+    k.spin = Math.max(0, k.spin - dt);
+    k.drift = 0;
+    k.boost = 0;
+    k.brakeHeld = input.brake;
+    k.speed = Math.max(6, k.speed - 24 * dt);
+    k.s += k.speed * dt / track.length;
+    k.yaw += (0 - k.yaw) * Math.min(1, dt * 8);
+    return;
+  }
   k.steer += (input.steer - k.steer) * Math.min(1, dt * 10);
   const slip = input.brake && Math.abs(k.steer) > .26 && k.speed > 15;
   if (slip) k.drift = clamp(k.drift + dt * .86, 0, 1);
@@ -39,9 +50,11 @@ export function drive(k: Kart, input: Input, dt: number, track = RED_BASIN) {
     k.drift = 0;
   }
   k.brakeHeld = input.brake;
+  const starred = k.star > 0;
   const boosting = k.boost > 0;
-  const max = boosting ? 56 : slip ? 35 : input.brake ? 12 : 42;
-  k.speed = clamp(k.speed + (input.brake && !slip ? -27 : boosting || input.gas || slip ? 24 - k.speed * .29 : -8) * dt, 0, Math.max(0, k.speed - (slip ? 9 : 15) * dt, max));
+  const max = starred ? 62 : boosting ? (k.boost > 1.45 ? 60 : 56) : slip ? 35 : input.brake ? 12 : 42;
+  const accel = input.brake && !slip ? -27 : starred ? 32 - k.speed * .25 : boosting || input.gas || slip ? 24 - k.speed * .29 : -8;
+  k.speed = clamp(k.speed + accel * dt, 0, Math.max(0, k.speed - (slip ? 9 : 15) * dt, max));
   k.boost = Math.max(0, k.boost - dt);
   const previous = k.s, previousLane = k.lane;
   const gain = slip ? 1.27 : .91;
@@ -52,7 +65,7 @@ export function drive(k: Kart, input: Input, dt: number, track = RED_BASIN) {
   const border = track.width / 2 - .85;
   if (Math.abs(k.lane) >= border) {
     k.lane = clamp(k.lane, -border, border);
-    k.speed = Math.max(0, k.speed - (Math.sign(k.steer) === Math.sign(k.lane) ? 41 : 15) * dt);
+    if (!starred) k.speed = Math.max(0, k.speed - (Math.sign(k.steer) === Math.sign(k.lane) ? 41 : 15) * dt);
   }
   k.s += k.speed * (1 - Math.abs(k.steer) * (slip ? .055 : .10)) * dt / track.length;
   for (const p of track.pads) {

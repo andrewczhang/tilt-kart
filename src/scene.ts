@@ -1,6 +1,8 @@
 import * as T from 'three';
 import { COLORS, RED_BASIN, SAMPLES, clamp, delta, wrap, type Circuit } from './circuit';
 import { PAD_LENGTH, PAD_WIDTH, type Pose } from './drive';
+import type { PowerupState } from './powerups';
+import { PowerupScene } from './powerups-scene';
 import { themedScenery } from './track-art';
 import { TRACK_IDS } from './tracks';
 
@@ -188,7 +190,7 @@ function kart(color: string) {
   }
   const flame = block(body, new T.MeshBasicMaterial({ color: '#ffb83d' }), 0, .5, -1.59, .38, .23, .55);
   flame.visible = false;
-  return { root, body, flame, paint, under };
+  return { root, body, flame, paint, under, baseColor: color };
 }
 
 export class View {
@@ -201,9 +203,11 @@ export class View {
   private world?: T.Group;
   private track = RED_BASIN;
   private resetCamera = false;
+  private readonly powerupScene: PowerupScene;
   constructor(private readonly canvas: HTMLCanvasElement, private readonly labelLayer: HTMLElement) {
     this.renderer = new T.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+    this.powerupScene = new PowerupScene(this.scene);
     this.setTrack(RED_BASIN);
   }
   setTrack(track: Circuit) {
@@ -236,8 +240,9 @@ export class View {
     if (track.id === 'red-basin') scenery(this.world, track);
     else themedScenery(this.world, track);
     this.scene.add(this.world);
+    this.powerupScene.setTrack(track);
   }
-  render(local: Pose, actors: { id: string; name: string; slot: number; pose: Pose }[], own: string, dt: number, menu = false) {
+  render(local: Pose, actors: { id: string; name: string; slot: number; pose: Pose }[], own: string, dt: number, menu = false, powerups?: PowerupState) {
     const { frame, point } = this.track;
     const width = this.canvas.clientWidth, height = this.canvas.clientHeight;
     const aspect = width / Math.max(1, height);
@@ -273,6 +278,7 @@ export class View {
       model.flame.material.dispose();
       this.models.delete(id); this.labels.get(id)?.remove(); this.labels.delete(id);
     }
+    this.powerupScene.update(powerups, this.models, menu);
     const [s, lane, , speed, , boost] = local;
     const soft = menu || this.resetCamera ? 1 : clamp(dt * 7.5, 0, 1);
     this.resetCamera = false;

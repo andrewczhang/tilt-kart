@@ -1,5 +1,6 @@
 import { LAPS, RED_BASIN, SECTORS } from './circuit';
 import { grid, pose, type Pose } from './drive';
+import type { ItemEvent } from './powerups';
 import type { TrackId } from './tracks';
 
 export type Driver = {
@@ -10,6 +11,7 @@ export type ServerMessage =
   | { type: 'welcome'; id: string; now: number; room: RoomState }
   | { type: 'room'; room: RoomState }
   | { type: 'state'; id: string; pose: Pose; checkpoint: number; finish: number | null }
+  | { type: 'item'; from: string; event: ItemEvent }
   | { type: 'error'; reason: string };
 
 export function driver(id: string, name: string, slot: number, track = RED_BASIN): Driver {
@@ -28,7 +30,7 @@ export function validPose(value: unknown, track = RED_BASIN): value is Pose {
   if (!Array.isArray(value) || value.length !== 6 || !value.every(Number.isFinite)) return false;
   const [s, lane, yaw, speed, drift, boost] = value;
   return s >= -.05 && s <= LAPS + .01 && Math.abs(lane) <= track.width / 2 && Math.abs(yaw) <= 1
-    && speed >= 0 && speed <= 56 && drift >= 0 && drift <= 1 && boost >= 0 && boost <= 1.5;
+    && speed >= 0 && speed <= 64 && drift >= 0 && drift <= 1 && boost >= 0 && boost <= 2.2;
 }
 
 export function checkpointAt(s: number, track = RED_BASIN) {
@@ -41,7 +43,7 @@ export function checkpointAt(s: number, track = RED_BASIN) {
 }
 
 export function advance(d: Driver, p: Pose, elapsed: number, dt: number, track = RED_BASIN) {
-  if (d.finish !== null || p[0] < d.pose[0] || p[0] - d.pose[0] > 59 * (dt + .14) / track.length) return false;
+  if (d.finish !== null || p[0] < d.pose[0] || p[0] - d.pose[0] > 67 * (dt + .14) / track.length) return false;
   d.pose = p;
   const checkpoint = checkpointAt(p[0], track);
   if (checkpoint > d.checkpoint) d.checkpoint = checkpoint;

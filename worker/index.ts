@@ -1,13 +1,14 @@
 import { DurableObject } from 'cloudflare:workers';
-import { COUNTDOWN, LIMIT, getTrack } from '../src/circuit';
+import { COUNTDOWN, LIMIT, delta, getTrack, wrap, type Circuit } from '../src/circuit';
 import { grid, pose } from '../src/drive';
+import { BOX_RESPAWN, BOX_SPOTS, validItemEvent, type ItemEvent } from '../src/powerups';
 import { advance, driver, validPose, type Driver, type RoomState, type ServerMessage } from '../src/rules';
 import { DEFAULT_TRACK, isTrackId, type TrackId } from '../src/tracks';
 
 type Env = { ASSETS: Fetcher; ROOMS: DurableObjectNamespace<Room> };
 type Away = Driver & { token?: string };
 type Meta = { created: number; host: string; start: number | null; complete: boolean; gone: Away[]; track?: TrackId };
-type Attachment = { driver: Driver; last: number; token?: string; watching?: boolean };
+type Attachment = { driver: Driver; last: number; token?: string; watching?: boolean; hasItem?: boolean };
 const CODE = /^[A-Z0-9]{8}$/;
 const TOKEN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const IDLE_LIMIT = 12 * 60 * 60 * 1000;
@@ -36,6 +37,8 @@ export default {
 
 export class Room extends DurableObject<Env> {
   private meta?: Meta;
+  private boxReady = new Map<number, number>();
+  private activeItems = new Map<string, { kind: 'banana' | 'shell' | 'homing'; owner: string; s: number; lane: number; expires: number }>();
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
@@ -73,7 +76,7 @@ export class Room extends DurableObject<Env> {
     const name = url.searchParams.get('name')?.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 20) || 'Driver';
     let data: Attachment;
     if (previous) {
-      data = this.data(previous)!;
+      data = { ...this.data(previous)!, hasItem: false };
       previous.serializeAttachment(null);
       previous.close(4001, 'Rejoined in another tab.');
     } else if (away >= 0) {
@@ -96,6 +99,14 @@ export class Room extends DurableObject<Env> {
     const saved = hostChanged || away >= 0 || completed ? this.save() : undefined;
     const room = this.snapshot(meta);
     this.send(pair[1], { type: 'welcome', id, now, room });
+    if (meta.start !== null && !meta.complete) {
+      for (const [hid, item] of this.activeItems) {
+        if (item.expires > now && item.kind === 'banana') {
+          const ttl = Math.round(((item.expires - now) / 1000) * 10) / 10;
+          if (ttl > 0) this.send(pair[1], { type: 'item', from: item.owner, event: { kind: 'drop', item: 'banana', hid, s: item.s, lane: item.lane, ttl } });
+        }
+      }
+    }
     this.broadcast({ type: 'room', room }, pair[1]);
     await saved;
     return upgrade();
@@ -103,7 +114,7 @@ export class Room extends DurableObject<Env> {
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer) {
     const meta = this.meta, data = this.data(ws);
-    if (!meta || !data || typeof raw !== 'string' || raw.length > 160) return;
+    if (!meta || !data || typeof raw !== 'string' || raw.length > 256) return;
     const now = Date.now();
     if (now - meta.created > IDLE_LIMIT) { ws.close(1008, 'Room link has expired.'); return; }
     if (raw === 'rematch') {
@@ -112,6 +123,8 @@ export class Room extends DurableObject<Env> {
       meta.complete = false;
       meta.gone = [];
       const track = getTrack(meta.track);
+      this.boxReady.clear();
+      this.activeItems.clear();
       const entries = this.sockets().map(s => ({ s, data: this.data(s)! }));
       const slots = new Set(entries.filter(e => !e.data.watching).map(e => e.data.driver.slot));
       for (const { s, data } of entries) {
@@ -142,6 +155,8 @@ export class Room extends DurableObject<Env> {
     if (raw === 'start') {
       if (data.driver.id !== meta.host || meta.start !== null) return;
       meta.start = now + COUNTDOWN;
+      this.boxReady.clear();
+      this.activeItems.clear();
       await this.publish(meta);
       return;
     }
@@ -150,10 +165,18 @@ export class Room extends DurableObject<Env> {
       if (this.maybeComplete(meta, now)) await this.publish(meta);
       return;
     }
-    if (data.watching || raw === 'status' || now - data.last < 42 || data.driver.finish !== null) return;
+    if (data.watching || raw === 'status' || data.driver.finish !== null) return;
     let p: unknown;
     try { p = JSON.parse(raw); } catch { return; }
     const track = getTrack(meta.track);
+    if (p && typeof p === 'object' && !Array.isArray(p)) {
+      const msg = p as { type?: unknown; event?: unknown };
+      if (msg.type === 'item' && validItemEvent(msg.event, track) && this.acceptItem(ws, data, msg.event, now, track)) {
+        this.broadcast({ type: 'item', from: data.driver.id, event: msg.event }, ws);
+      }
+      return;
+    }
+    if (now - data.last < 42) return;
     if (!validPose(p, track) || !advance(data.driver, p, now - meta.start, (now - (data.last || meta.start)) / 1000, track)) return;
     data.last = now;
     ws.serializeAttachment(data);
@@ -179,6 +202,45 @@ export class Room extends DurableObject<Env> {
 
   webSocketError(ws: WebSocket) {
     return this.webSocketClose(ws, 1011, 'Connection interrupted');
+  }
+
+  private acceptItem(ws: WebSocket, data: Attachment, event: ItemEvent, now: number, track: Circuit) {
+    const near = (s: number) => Math.abs(delta(wrap(data.driver.pose[0]) - wrap(s))) * track.length <= 28;
+    if (event.kind === 'pickup') {
+      const spot = BOX_SPOTS[event.box];
+      if (!spot || now < (this.boxReady.get(event.box) ?? 0) || !near(spot.s)) return false;
+      this.boxReady.set(event.box, now + BOX_RESPAWN * 1000);
+      data.hasItem = true;
+      ws.serializeAttachment(data);
+      return true;
+    }
+    if (event.kind === 'drop' || event.kind === 'fire' || event.kind === 'star') {
+      if (!data.hasItem) return false;
+      if ((event.kind === 'drop' || event.kind === 'fire') && !near(event.s)) return false;
+      data.hasItem = false;
+      ws.serializeAttachment(data);
+      if (event.kind === 'drop' || event.kind === 'fire') {
+        if (this.activeItems.size > 40) {
+          for (const [k, v] of this.activeItems) if (v.expires < now) this.activeItems.delete(k);
+        }
+        this.activeItems.set(event.hid, {
+          kind: event.item, owner: data.driver.id, s: event.s, lane: event.lane,
+          expires: now + (event.kind === 'drop' ? 45_000 : 7_000)
+        });
+      }
+      return true;
+    }
+    if (event.kind === 'hit') {
+      if (event.target !== data.driver.id) return false;
+      if (event.hid !== undefined) {
+        const active = this.activeItems.get(event.hid);
+        if (!active || active.expires < now) return false;
+        if (active.kind === 'banana' && !near(active.s)) return false;
+        this.activeItems.delete(event.hid);
+      }
+      return true;
+    }
+    return false;
   }
 
   private data(ws: WebSocket) { return ws.deserializeAttachment() as Attachment | null; }
