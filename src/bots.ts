@@ -1,5 +1,6 @@
-import { COLORS, LAPS, LIMIT, RED_BASIN, clamp, delta, mix, type Circuit } from './circuit';
+import { COLORS, LAPS, LIMIT, RED_BASIN, clamp, delta, getTrack, mix, type Circuit } from './circuit';
 import { drive, grid, pose, type Input, type Kart } from './drive';
+import { cupTrack, scoreRound, type Cup } from './cups';
 import { advance, driver, type Driver, type RoomState } from './rules';
 
 export const MAX_RACERS = COLORS.length;
@@ -36,13 +37,16 @@ export class LocalRace {
   readonly room: RoomState;
   private readonly bots: { entry: Driver; kart: Kart }[];
 
-  constructor(readonly racers: number, start: number, private readonly track = RED_BASIN) {
+  private readonly track: Circuit;
+
+  constructor(readonly racers: number, start: number, singleTrack = RED_BASIN, cup?: Cup) {
+    const track = this.track = cup ? getTrack(cupTrack(cup)) : singleTrack;
     this.human = driver('solo', racers === 1 ? 'Practice' : 'Player', racers - 1, track);
     this.kart = grid(this.human.slot, track);
     this.bots = names.slice(0, racers - 1).map((name, slot) => ({
       entry: driver(`bot-${slot}`, `${name} (bot)`, slot, track), kart: grid(slot, track),
     }));
-    this.room = { host: this.human.id, start, complete: false, track: track.id, drivers: [...this.bots.map(bot => bot.entry), this.human] };
+    this.room = { host: this.human.id, start, complete: false, track: track.id, cup, drivers: [...this.bots.map(bot => bot.entry), this.human] };
   }
 
   hitBot(id: string, duration = 1.15) {
@@ -66,6 +70,7 @@ export class LocalRace {
       }
     }
     this.room.complete = elapsed >= LIMIT || this.room.drivers.every(entry => entry.finish !== null);
+    if (this.room.complete && this.room.cup) this.room.cup = scoreRound(this.room.cup, this.room.drivers);
     return changed || this.room.complete;
   }
 }

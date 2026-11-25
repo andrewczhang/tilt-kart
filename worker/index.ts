@@ -1,13 +1,13 @@
 import { DurableObject } from 'cloudflare:workers';
 import { COUNTDOWN, LIMIT, delta, getTrack, wrap, type Circuit } from '../src/circuit';
-import { grid, pose } from '../src/drive';
+import { cupTrack, isCupId, newCup, nextRound, scoreRound, type Cup } from '../src/cups';
 import { BOX_RESPAWN, BOX_SPOTS, validItemEvent, type ItemEvent } from '../src/powerups';
 import { advance, driver, validPose, type Driver, type RoomState, type ServerMessage } from '../src/rules';
 import { DEFAULT_TRACK, isTrackId, type TrackId } from '../src/tracks';
 
 type Env = { ASSETS: Fetcher; ROOMS: DurableObjectNamespace<Room> };
 type Away = Driver & { token?: string };
-type Meta = { created: number; host: string; start: number | null; complete: boolean; gone: Away[]; track?: TrackId };
+type Meta = { created: number; host: string; start: number | null; complete: boolean; gone: Away[]; track?: TrackId; cup?: Cup };
 type Attachment = { driver: Driver; last: number; token?: string; watching?: boolean; hasItem?: boolean };
 const CODE = /^[A-Z0-9]{8}$/;
 const TOKEN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -88,7 +88,7 @@ export class Room extends DurableObject<Env> {
       const slots = new Set(sockets.map(s => this.data(s)!.driver.slot));
       let slot = 0;
       while (slots.has(slot)) slot++;
-      data = { driver: driver(crypto.randomUUID().slice(0, 8), name, watching ? 0 : slot, getTrack(meta.track)), last: 0, token, watching };
+      data = { driver: driver(crypto.randomUUID().slice(0, 8), name, watching ? 0 : slot, getTrack(this.trackId(meta))), last: 0, token, watching };
     }
     const { id } = data.driver;
     pair[1].serializeAttachment(data);
@@ -118,37 +118,40 @@ export class Room extends DurableObject<Env> {
     const now = Date.now();
     if (now - meta.created > IDLE_LIMIT) { ws.close(1008, 'Room link has expired.'); return; }
     if (raw === 'rematch') {
-      if (data.driver.id !== meta.host || !meta.complete) return;
+      if (data.driver.id !== meta.host || !meta.complete || (meta.cup && nextRound(meta.cup))) return;
       meta.start = null;
       meta.complete = false;
       meta.gone = [];
-      const track = getTrack(meta.track);
-      this.boxReady.clear();
-      this.activeItems.clear();
-      const entries = this.sockets().map(s => ({ s, data: this.data(s)! }));
-      const slots = new Set(entries.filter(e => !e.data.watching).map(e => e.data.driver.slot));
-      for (const { s, data } of entries) {
-        let slot = data.driver.slot;
-        if (data.watching) {
-          while (slots.has(slot)) slot++;
-          slots.add(slot);
-        }
-        const { id, name } = data.driver;
-        s.serializeAttachment({ driver: driver(id, name, slot, track), last: 0, token: data.token } satisfies Attachment);
-      }
+      if (meta.cup) meta.cup = newCup(meta.cup.id);
+      this.resetGrid(meta, true);
+      await this.publish(meta);
+      return;
+    }
+    if (raw.startsWith('next:')) {
+      if (data.driver.id !== meta.host || !meta.complete || !meta.cup || raw !== `next:${meta.cup.round}`) return;
+      const cup = nextRound(meta.cup);
+      if (!cup) return;
+      meta.cup = cup;
+      meta.start = now + COUNTDOWN;
+      meta.complete = false;
+      this.resetGrid(meta);
+      await this.publish(meta);
+      return;
+    }
+    if (raw.startsWith('cup:')) {
+      const id = raw.slice(4);
+      if (data.driver.id !== meta.host || meta.start !== null || (id !== 'single' && !isCupId(id))) return;
+      if (id === (meta.cup?.id ?? 'single')) return;
+      meta.cup = isCupId(id) ? newCup(id) : undefined;
+      this.resetGrid(meta);
       await this.publish(meta);
       return;
     }
     if (raw.startsWith('track:')) {
       const id = raw.slice(6);
-      if (data.driver.id !== meta.host || meta.start !== null || !isTrackId(id) || id === (meta.track ?? DEFAULT_TRACK)) return;
+      if (data.driver.id !== meta.host || meta.start !== null || meta.cup || !isTrackId(id) || id === (meta.track ?? DEFAULT_TRACK)) return;
       meta.track = id;
-      const track = getTrack(id);
-      for (const socket of this.sockets()) {
-        const attachment = this.data(socket)!;
-        attachment.driver.pose = pose(grid(attachment.driver.slot, track));
-        socket.serializeAttachment(attachment);
-      }
+      this.resetGrid(meta);
       await this.publish(meta);
       return;
     }
@@ -168,7 +171,7 @@ export class Room extends DurableObject<Env> {
     if (data.watching || raw === 'status' || data.driver.finish !== null) return;
     let p: unknown;
     try { p = JSON.parse(raw); } catch { return; }
-    const track = getTrack(meta.track);
+    const track = getTrack(this.trackId(meta));
     if (p && typeof p === 'object' && !Array.isArray(p)) {
       const msg = p as { type?: unknown; event?: unknown };
       if (msg.type === 'item' && validItemEvent(msg.event, track) && this.acceptItem(ws, data, msg.event, now, track)) {
@@ -245,6 +248,25 @@ export class Room extends DurableObject<Env> {
 
   private data(ws: WebSocket) { return ws.deserializeAttachment() as Attachment | null; }
   private sockets() { return this.ctx.getWebSockets().filter(s => this.data(s)); }
+  private trackId(meta: Meta) { return meta.cup ? cupTrack(meta.cup) : meta.track ?? DEFAULT_TRACK; }
+  private resetGrid(meta: Meta, promoteWatchers = false) {
+    const track = getTrack(this.trackId(meta));
+    this.boxReady.clear();
+    this.activeItems.clear();
+    const entries = this.sockets().map(s => ({ s, data: this.data(s)! }));
+    const slots = new Set(entries.filter(e => !e.data.watching).map(e => e.data.driver.slot));
+    for (const { s, data } of entries) {
+      let { id, name, slot } = data.driver;
+      if (data.watching) {
+        if (!promoteWatchers) continue;
+        while (slots.has(slot)) slot++;
+        slots.add(slot);
+      }
+      s.serializeAttachment({ driver: driver(id, name, slot, track), last: 0, token: data.token } satisfies Attachment);
+    }
+    meta.gone = meta.gone.map(({ id, name, slot, token }) => ({ ...driver(id, name, slot, track), token, online: false }));
+  }
+
   private save() { return this.ctx.storage.put('room', this.meta!); }
   private publish(meta: Meta) {
     const saved = this.save();
@@ -253,7 +275,7 @@ export class Room extends DurableObject<Env> {
   }
   private snapshot(meta: Meta): RoomState {
     return {
-      host: meta.host, start: meta.start, complete: meta.complete, track: meta.track ?? DEFAULT_TRACK,
+      host: meta.host, start: meta.start, complete: meta.complete, track: this.trackId(meta), cup: meta.cup,
       drivers: [...this.sockets().map(s => this.data(s)!).filter(d => !d.watching).map(d => d.driver),
         ...meta.gone.map(({ token: _token, ...d }) => d)]
     };
@@ -266,9 +288,11 @@ export class Room extends DurableObject<Env> {
     for (const s of this.sockets()) if (s !== except) try { s.send(packet); } catch {}
   }
   private maybeComplete(meta: Meta, now: number) {
-    if (meta.start === null || meta.complete) return false;
-    if (now - meta.start < LIMIT && this.snapshot(meta).drivers.some(d => d.finish === null)) return false;
+    if (meta.start === null || now < meta.start || meta.complete) return false;
+    const { drivers } = this.snapshot(meta);
+    if (now - meta.start < LIMIT && drivers.some(d => d.finish === null && (!meta.cup || d.online))) return false;
     meta.complete = true;
+    if (meta.cup) meta.cup = scoreRound(meta.cup, drivers);
     return true;
   }
 }

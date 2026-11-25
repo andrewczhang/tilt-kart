@@ -4,10 +4,12 @@ Race eight three-lap 3D circuits, from Red Basin to the figure-eight overpass at
 
 ## How to play
 
-1. Pick a track for **Solo practice** or **Vs bots** (2–8 racers, including you). To play with friends, create a room and choose a driver name. The host picks the track in the lobby. Use **Invite friends** to send the room link, then **Start race** when everybody is on the grid.
+1. Pick a track for **Solo practice** or **Vs bots** (2–8 racers, including you). To play with friends, create a room and choose a driver name. The host picks the race format and track in the lobby. Use **Invite friends** to send the room link, then start when everybody is on the grid.
 2. On a phone, turn it sideways and select **Enable tilt** before starting. Hold it like a wheel, or use **Left / Right** at any time. The kart accelerates automatically; hold **Brake / Drift** while steering, then release for a boost. Use **Recenter tilt** to set a new neutral angle.
 3. On desktop, use **WASD** or the arrow keys. Hold **S**, **Down** or **Space** to brake. Hit the colored strips to boost, and keep clear of the curbs and barriers.
 4. Use **Mute music** in the race HUD to silence the soundtrack without muting the kart's sound effects. Each circuit has an original house loop made with [Beat Lab](https://andrewcz.pages.dev/beats).
+
+Choose **Grand Prix** to race a four-track cup against bots, or choose a cup under **Race format** in a multiplayer lobby. Finishers earn 15, 12, 10, 8, 6, 4, 2 or 1 point by place; a DNF earns none. Ties go to the driver with more wins, then more second places, and so on; the starting slot breaks any remaining tie. Read the running standings between races, then see the podium after race four. The host advances multiplayer cups; late arrivals watch until the host returns to the lobby.
 
 ## Develop
 
