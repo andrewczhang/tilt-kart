@@ -88,6 +88,7 @@ dialog h2{margin:0}
 .results{position:absolute;inset:0;display:grid;place-items:center;background:#28343da8;padding:14px}
 .result-sheet{width:min(100%,510px);max-height:100%;overflow:auto;background:var(--red);padding:clamp(14px,4vw,35px);box-shadow:8px 8px 0 var(--ink)}
 .result-sheet .list{max-width:none}
+.result-sheet .trial-interrupted-title{font-size:clamp(32px,6.2vw,60px);text-wrap:balance;overflow-wrap:anywhere}
 .result-sheet #result-status,.result-sheet .finish-time{margin:0}
 .finish-time small{display:block}
 .finish-time strong{display:block;font:900 clamp(48px,10vh,76px)/1 Impact,"Arial Black",sans-serif;color:var(--ink);font-variant-numeric:tabular-nums}
@@ -145,5 +146,6 @@ dialog h2{margin:0}
  .list{margin:7px 0}
  .list li{padding:3px 0}
  .result-sheet{padding:14px 20px}
+ .result-sheet .trial-interrupted-title{font-size:42px}
  .result-sheet .identity,.result-sheet dl{margin-top:0;margin-bottom:7px}
 }

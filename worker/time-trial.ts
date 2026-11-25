@@ -28,12 +28,14 @@ export function validSubmission(value: unknown, trackId: TrackId): Submission | 
     if (!i) continue;
     const dt = (Math.min(i * GHOST_INTERVAL, lapMs) - (i - 1) * GHOST_INTERVAL) / 1000;
     const [before, beforeLane] = replay.poses[i - 1];
-    if (s - before > 2 * MAX_BOOST_SPEED * dt / track.length + GHOST_PROGRESS_QUANTUM) return null;
+    if (Math.abs(s - before) > 2 * MAX_BOOST_SPEED * dt / track.length + GHOST_PROGRESS_QUANTUM) return null;
     const from = track.point(before, beforeLane), to = track.point(s, lane);
     const distance = Math.hypot(to.x - from.x, to.z - from.z);
+    const low = Math.min(before, s), high = Math.max(before, s);
+    const lap = Math.floor(low);
     let flightSpeed = 0;
     for (const jump of track.jumps ?? []) {
-      if (before - GHOST_PROGRESS_QUANTUM < jump.end && s + GHOST_PROGRESS_QUANTUM >= jump.start) {
+      if (low - lap - GHOST_PROGRESS_QUANTUM < jump.end && high - lap + GHOST_PROGRESS_QUANTUM >= jump.start) {
         flightSpeed = Math.max(flightSpeed, track.flightSpeed(jump.start));
       }
     }

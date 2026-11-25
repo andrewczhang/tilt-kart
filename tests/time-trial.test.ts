@@ -35,7 +35,8 @@ test('replays round trip quantized poses and interpolate a partial final interva
   assert.ok(ghost);
   assert.deepEqual(ghost.poses, poses);
   assert.equal(ghostPose(ghost, 62.5)[0], .8);
-  assert.ok(Math.abs(ghostTimeAt(ghost, .8) - 62.5) < .0001);
+  const time = ghostTimeAt(ghost, .8);
+  assert.ok(time !== undefined && Math.abs(time - 62.5) < .0001);
   assert.deepEqual(ghostPose(ghost, 100), poses[2]);
   assert.equal(decodeGhost(101, encoded), null);
   assert.equal(decodeGhost(75, '!' + encoded.slice(1)), null);
@@ -48,6 +49,26 @@ test('every track produces a server-valid flying lap with the real driving model
       ...replay, name: 'Driver', driverId: uuid,
     }, id);
   }
+});
+
+test('ghosts replay negative lap progress and time the first crossing after backtracking', () => {
+  const positions = [0, -.001, .004, .002, .006, .34, .67, 1];
+  const poses = positions.map(s => [s, 0, 0, 42, 0, 0] as Pose);
+  const ghost = decodeGhost(350, encodeGhost(poses));
+  assert.ok(ghost);
+  assert.ok(ghostPose(ghost, 50)[0] < 0);
+  const first = ghostTimeAt(ghost, .003);
+  const second = ghostTimeAt(ghost, .005);
+  assert.ok(first !== undefined && first < 100);
+  assert.ok(second !== undefined && second > 150);
+});
+
+test('the ghost delta has no comparison time behind the start line', () => {
+  const ghost = decodeGhost(50, encodeGhost([[0, 0, 0, 42, 0, 0], [1, 0, 0, 42, 0, 0]]));
+  assert.ok(ghost);
+  assert.equal(ghostTimeAt(ghost, -.001), undefined);
+  assert.equal(ghostTimeAt(ghost, 0), 0);
+  assert.equal(ghostTimeAt(ghost, .5), 25);
 });
 
 test('accepts a Twin Mesa replay that steers hard across the jump', () => {
@@ -128,6 +149,25 @@ test('Frostline Pass uses wall time and the same replay at 60 and 15 FPS', () =>
   assert.ok(regular.replay.lapMs <= wall && regular.replay.lapMs > wall - 1000 / 15 - 10);
   assert.ok(validSubmission({ ...slowFrames.replay, name: 'Driver', driverId: uuid }, track.id));
 });
+
+for (const fps of [5, 60]) {
+  test(`Frostline accepts a real lap with backtracking at ${fps} FPS`, () => {
+    const track = getTrack('frostline');
+    const trial = new TimeTrial(track, 0);
+    for (let frame = 0; !trial.finished; frame++) {
+      const elapsed = frame * 1000 / fps;
+      const steer = elapsed >= 8000 && elapsed < 9400 ? 1 : centerSteer(trial.kart, track) * .2;
+      trial.step({ ...input, steer }, trial.start + elapsed);
+    }
+    assert.ok(trial.replay);
+    const ghost = decodeGhost(trial.replay.lapMs, trial.replay.ghost);
+    assert.ok(ghost);
+    assert.equal(ghost.poses.length, Math.ceil(trial.replay.lapMs / GHOST_INTERVAL) + 1);
+    assert.ok(ghost.poses.some(([s], i) => i > 0 && s < ghost.poses[i - 1][0]));
+    const submission = { ...trial.replay, name: 'Driver', driverId: uuid };
+    assert.deepEqual(validSubmission(submission, track.id), submission);
+  });
+}
 
 test('a frame gap longer than one second interrupts the lap without creating a replay', () => {
   const trial = new TimeTrial(getTrack(), 0);

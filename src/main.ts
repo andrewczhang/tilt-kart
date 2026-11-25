@@ -566,7 +566,7 @@ function trialResults(attempt: Trial) {
   if (improved) savePersonalGhost(race.track.id, replay);
   const best = improved ? replay : personal?.replay;
   show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet"><p class="identity">Time trial / ${race.track.name}</p>
-    <h2 class="title" id="result-title">${replay ? formatLap(replay.lapMs) : race.interrupted ? 'Lap interrupted' : 'Time expired'}</h2>
+    <h2 class="title${race.interrupted ? ' trial-interrupted-title' : ''}" id="result-title">${replay ? formatLap(replay.lapMs) : race.interrupted ? 'Lap interrupted' : 'Time expired'}</h2>
     ${best ? `<p>${improved ? 'New personal best' : `Personal best · ${formatLap(best.lapMs)}`}</p>` : ''}
     <p id="result-status" role="status">${race.interrupted ? 'The game stopped updating for too long. This lap wasn’t submitted.' : ''}</p>
     <div class="actions">${button('retry', 'Race again')}${button('back', 'Leaderboard', true)}</div>
@@ -732,8 +732,9 @@ function tickTrial(attempt: Trial, now: number, dt: number) {
       if (world) addGhost('ghost-world', 'World best', world, '#ffa1b9');
     }
     set('trial-target', personal ? 'Δ Personal best' : world ? 'Δ World best' : 'Ghost delta');
-    const gap = target ? Math.round(elapsed - ghostTimeAt(target.decoded, mine[0])) : 0;
-    set('trial-delta', target && elapsed > 0 ? `${gap < 0 ? '−' : '+'}${(Math.abs(gap) / 1000).toFixed(3)}` : '—');
+    const targetTime = target && ghostTimeAt(target.decoded, mine[0]);
+    const gap = targetTime === undefined ? undefined : Math.round(elapsed - targetTime);
+    set('trial-delta', gap !== undefined && elapsed > 0 ? `${gap < 0 ? '−' : '+'}${(Math.abs(gap) / 1000).toFixed(3)}` : '—');
     set('trial-clock', formatLap(elapsed));
     set('speed', String(now < race.start ? 0 : Math.round(local.speed * 3.6)));
     set('status', now < race.start ? String(Math.min(3, Math.ceil((race.start - now) / 1000))) : elapsed < 630 ? 'GO!' : '');
