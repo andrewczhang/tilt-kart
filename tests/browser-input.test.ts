@@ -26,7 +26,7 @@ test('blocked local storage does not prevent loading or changing preferences', (
   });
 });
 
-test('space brakes in the race without overriding focused buttons or inputs', () => {
+test('space activates menu buttons but brakes during a race regardless of focus', () => {
   const events = new EventTarget();
   class Button {}
   class InputField {}
@@ -46,9 +46,12 @@ test('space brakes in the race without overriding focused buttons or inputs', ()
     assert.equal(space('keydown', new Button()), true);
     assert.equal(controls.input().brake, false);
     racing = true;
-    assert.equal(space('keydown', new Button()), true);
-    assert.equal(space('keydown', new InputField()), true);
-    assert.equal(controls.input().brake, false);
+    assert.equal(space('keydown', new Button()), false);
+    assert.equal(controls.input().brake, true);
+    space('keyup', new Button());
+    assert.equal(space('keydown', new InputField()), false);
+    assert.equal(controls.input().brake, true);
+    space('keyup', new InputField());
     assert.equal(space('keydown', {}), false);
     assert.equal(controls.input().brake, true);
     space('keyup', {});

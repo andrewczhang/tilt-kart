@@ -230,16 +230,20 @@ function begin() {
   touch.bindTouch();
   touch.calibrate();
   updateTilt();
-  doOn('tilt', () => {
+  const hudAction = (id: string, action: () => void) => doOn(id, () => {
+    $(id).blur();
+    action();
+  });
+  hudAction('tilt', () => {
     void touch.enableTilt().then(allowed => {
       if (!allowed && screen === 'race') $('tilt').textContent = 'Tilt unavailable';
       else updateTilt();
     });
   });
   const labelSound = () => { $('sound').textContent = motor.muted ? 'Sound off' : 'Sound on'; };
-  doOn('sound', () => { motor.toggle(); labelSound(); });
+  hudAction('sound', () => { motor.toggle(); labelSound(); });
   labelSound();
-  doOn('exit', home);
+  hudAction('exit', home);
 }
 
 function formatTime(ms: number) {

@@ -14,7 +14,7 @@ export class Controls {
 
   constructor(private change: () => void, racing: () => boolean) {
     addEventListener('keydown', e => {
-      if (!racing() || e.target instanceof HTMLInputElement || (e.key === ' ' && e.target instanceof HTMLButtonElement)) return;
+      if (!racing()) return;
       if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(e.key)) e.preventDefault();
       this.keys.add(e.key.toLowerCase());
     });
