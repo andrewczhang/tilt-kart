@@ -68,8 +68,38 @@ export class Motor {
     const now = this.ctx.currentTime;
     this.master.gain.setTargetAtTime(!this.muted && kart ? .13 : 0, now, .11);
     if (kart) {
-      this.motor.frequency.setTargetAtTime(42 + kart.speed * 2.65 + (kart.boost > 0 ? 16 : 0), now, .075);
+      const pitch = 42 + kart.speed * 2.65 + (kart.boost > 0 ? 16 : 0) + (kart.star > 0 ? 22 : 0);
+      this.motor.frequency.setTargetAtTime(pitch, now, .075);
       this.skid.gain.setTargetAtTime(kart.drift * .45, now, .12);
+    }
+  }
+
+  sfx(kind: 'pickup' | 'roulette' | 'ready' | 'turbo' | 'fire' | 'drop' | 'hit' | 'star') {
+    if (this.muted || !this.ctx) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const tone = (freq: number, endFreq: number, dur: number, type: OscillatorType = 'triangle', gain = 0.14, delay = 0) => {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, now + delay);
+      osc.frequency.exponentialRampToValueAtTime(Math.max(30, endFreq), now + delay + dur);
+      g.gain.setValueAtTime(0.001, now + delay);
+      g.gain.linearRampToValueAtTime(gain, now + delay + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.001, now + delay + dur);
+      osc.connect(g).connect(ctx.destination);
+      osc.start(now + delay);
+      osc.stop(now + delay + dur + 0.02);
+    };
+    if (kind === 'pickup') { tone(520, 780, 0.12, 'triangle', 0.14); tone(780, 1040, 0.14, 'triangle', 0.12, 0.08); }
+    else if (kind === 'roulette') { tone(660, 720, 0.045, 'square', 0.05); }
+    else if (kind === 'ready') { tone(784, 1175, 0.16, 'triangle', 0.15); }
+    else if (kind === 'turbo') { tone(240, 880, 0.32, 'sawtooth', 0.14); }
+    else if (kind === 'fire') { tone(440, 180, 0.16, 'square', 0.13); }
+    else if (kind === 'drop') { tone(280, 120, 0.14, 'triangle', 0.13); }
+    else if (kind === 'hit') { tone(460, 110, 0.36, 'sawtooth', 0.16); tone(320, 95, 0.32, 'square', 0.1, 0.08); }
+    else if (kind === 'star') {
+      [523, 659, 784, 1047].forEach((f, i) => tone(f, f * 1.03, 0.14, 'triangle', 0.13, i * 0.065));
     }
   }
 }

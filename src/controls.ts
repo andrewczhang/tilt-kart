@@ -6,6 +6,7 @@ type Orientation = typeof DeviceOrientationEvent & { requestPermission?: () => P
 export class Controls {
   private keys = new Set<string>();
   private pointers = new Map<number, 'left' | 'right' | 'brake'>();
+  private itemQueued = false;
   private roll: number | undefined;
   private neutral: number | undefined;
   private orientation = 0;
@@ -17,11 +18,26 @@ export class Controls {
   constructor(private change: () => void, racing: () => boolean) {
     addEventListener('keydown', e => {
       if (!racing()) return;
+      const key = e.key.toLowerCase();
       if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(e.key)) e.preventDefault();
-      this.keys.add(e.key.toLowerCase());
+      if ((key === 'e' || key === 'f' || (key === 'enter' && !(e.target instanceof HTMLButtonElement))) && !this.keys.has(key)) {
+        if (key === 'enter') e.preventDefault();
+        this.itemQueued = true;
+      }
+      this.keys.add(key);
     });
     addEventListener('keyup', e => this.keys.delete(e.key.toLowerCase()));
-    addEventListener('blur', () => { this.keys.clear(); this.pointers.clear(); });
+    addEventListener('blur', () => { this.keys.clear(); this.pointers.clear(); this.itemQueued = false; });
+  }
+
+  queueItem() {
+    this.itemQueued = true;
+  }
+
+  consumeItem(): boolean {
+    if (!this.itemQueued) return false;
+    this.itemQueued = false;
+    return true;
   }
 
   calibrate() {

@@ -45,6 +45,15 @@ export class LocalRace {
     this.room = { host: this.human.id, start, complete: false, track: track.id, drivers: [...this.bots.map(bot => bot.entry), this.human] };
   }
 
+  hitBot(id: string, duration = 1.15) {
+    const bot = this.bots.find(b => b.entry.id === id);
+    if (!bot || bot.kart.spin > 0) return;
+    bot.kart.spin = duration;
+    bot.kart.boost = 0;
+    bot.kart.drift = 0;
+    bot.kart.speed = Math.min(bot.kart.speed, 14);
+  }
+
   step(input: Input, dt: number, elapsed: number) {
     if (elapsed < 0 || this.room.complete) return false;
     const end = Math.min(elapsed, LIMIT);
