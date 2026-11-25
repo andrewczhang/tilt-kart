@@ -64,7 +64,8 @@ export function ghostPose({ lapMs, poses }: Ghost, elapsed: number): Pose {
 }
 
 export function ghostTimeAt({ lapMs, poses }: Ghost, progress: number) {
-  if (progress <= 0) return 0;
+  if (progress < poses[0][0]) return;
+  if (progress === poses[0][0]) return 0;
   if (progress >= 1) return lapMs;
   const hi = poses.findIndex(p => p[0] >= progress);
   const lo = hi - 1;

@@ -35,7 +35,8 @@ test('replays round trip quantized poses and interpolate a partial final interva
   assert.ok(ghost);
   assert.deepEqual(ghost.poses, poses);
   assert.equal(ghostPose(ghost, 62.5)[0], .8);
-  assert.ok(Math.abs(ghostTimeAt(ghost, .8) - 62.5) < .0001);
+  const time = ghostTimeAt(ghost, .8);
+  assert.ok(time !== undefined && Math.abs(time - 62.5) < .0001);
   assert.deepEqual(ghostPose(ghost, 100), poses[2]);
   assert.equal(decodeGhost(101, encoded), null);
   assert.equal(decodeGhost(75, '!' + encoded.slice(1)), null);
@@ -56,8 +57,18 @@ test('ghosts replay negative lap progress and time the first crossing after back
   const ghost = decodeGhost(350, encodeGhost(poses));
   assert.ok(ghost);
   assert.ok(ghostPose(ghost, 50)[0] < 0);
-  assert.ok(ghostTimeAt(ghost, .003) < 100);
-  assert.ok(ghostTimeAt(ghost, .005) > 150);
+  const first = ghostTimeAt(ghost, .003);
+  const second = ghostTimeAt(ghost, .005);
+  assert.ok(first !== undefined && first < 100);
+  assert.ok(second !== undefined && second > 150);
+});
+
+test('the ghost delta has no comparison time behind the start line', () => {
+  const ghost = decodeGhost(50, encodeGhost([[0, 0, 0, 42, 0, 0], [1, 0, 0, 42, 0, 0]]));
+  assert.ok(ghost);
+  assert.equal(ghostTimeAt(ghost, -.001), undefined);
+  assert.equal(ghostTimeAt(ghost, 0), 0);
+  assert.equal(ghostTimeAt(ghost, .5), 25);
 });
 
 test('accepts a Twin Mesa replay that steers hard across the jump', () => {
