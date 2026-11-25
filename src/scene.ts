@@ -146,65 +146,6 @@ function circuit(scene: T.Group, track: Circuit) {
   scene.add(arch);
 }
 
-function scenery(scene: T.Group, track: Circuit) {
-  const { frame, point } = track;
-  const ground = new T.Mesh(new T.PlaneGeometry(2600, 2600), flat('#c98457'));
-  ground.rotation.x = -Math.PI / 2; ground.position.y = -1.2; scene.add(ground);
-  let seed = 47063;
-  const rand = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
-  const o = new T.Object3D();
-  const rocks = new T.InstancedMesh(new T.DodecahedronGeometry(1, 0), flat('#fff'), 230);
-  const vistas = new T.InstancedMesh(new T.CylinderGeometry(.56, 1, 1, 6), flat('#fff'), 75);
-  const cacti = new T.InstancedMesh(new T.CylinderGeometry(.77, 1, 1, 6), flat('#649477'), 126);
-  const rail = new T.InstancedMesh(box, flat('#424455'), 34);
-  const mat = (mesh: T.InstancedMesh, i: number, color?: string) => {
-    o.updateMatrix();
-    mesh.setMatrixAt(i, o.matrix);
-    if (color) mesh.setColorAt(i, new T.Color(color));
-  };
-  const clear = (x: number, z: number, r: number) => {
-    for (let i = 0; i < 144; i++) {
-      const s = i / 144, f = frame(s), branch = track.branchAt(s);
-      if (Math.hypot(f.x - x, f.z - z) < r) return false;
-      if (branch) {
-        const p = point(s, branch.center);
-        if (Math.hypot(p.x - x, p.z - z) < r) return false;
-      }
-    }
-    return true;
-  };
-  for (let i = 0; i < rocks.count; i++) {
-    let x: number, z: number;
-    do { x = (rand() - .5) * 500; z = (rand() - .5) * 460; } while (!clear(x, z, 19));
-    const size = .7 + rand() ** 3 * 14;
-    o.position.set(x, size * .27 - 1.2, z); o.scale.set(size, size * (.35 + rand() * .6), size * .86); o.rotation.set(rand() * .3, rand() * 7, rand() * .4);
-    mat(rocks, i, ['#a64c35', '#d59664', '#deaa72', '#985e4e'][i % 4]);
-  }
-  for (let i = 0; i < vistas.count; i += 3) {
-    const a = rand() * 6.28, r = 220 + rand() * 280, x = Math.sin(a) * r, z = Math.cos(a) * r;
-    const w = 10 + rand() * 35, h = 13 + rand() * 34;
-    for (let j = 0; j < 3; j++) {
-      o.position.set(x, h * (.24 + j * .32), z); o.scale.set(w * (1 - j * .23), h * (j === 2 ? .44 : .57), w * .68 * (1 - j * .22)); o.rotation.set(0, a, 0);
-      mat(vistas, i + j, ['#965640', '#b6694a', '#985340'][j]);
-    }
-  }
-  for (let i = 0; i < cacti.count; i += 3) {
-    let x: number, z: number;
-    do { x = (rand() - .5) * 280; z = (rand() - .5) * 270; } while (!clear(x, z, 13));
-    const h = 2.1 + rand() * 3.8;
-    o.position.set(x, h / 2 - 1.2, z); o.scale.set(.35, h, .35); o.rotation.set(0, 0, 0); mat(cacti, i);
-    for (const side of [-1, 1]) {
-      o.position.set(x + side * .58, h * .55 - 1.2, z + side * .19); o.scale.set(.23, h * .42, .23); o.rotation.z = -.53 * side; mat(cacti, i + (side === 1 ? 2 : 1));
-    }
-  }
-  for (let i = 0; i < rail.count; i++) {
-    const s = .04 + i * .0019;
-    o.position.copy(point(s, 11.4, 1.4 + (i % 2) * .3));
-    o.scale.set(3.2, 2.5 + (i % 2) * .8, 1.8); o.rotation.set(0, frame(s).heading, 0); mat(rail, i, i % 3 ? '#e3c393' : '#ee6745');
-  }
-  scene.add(rocks, vistas, cacti, rail);
-}
-
 function kart(color: string, ghostColor?: string) {
   const root = new T.Group(), body = new T.Group();
   root.add(body);
@@ -287,8 +228,7 @@ export class View {
     const sun = new T.DirectionalLight(track.sun, night ? 1.15 : 2.3);
     sun.position.set(-65, 90, -45); this.world.add(sun);
     circuit(this.world, track);
-    if (track.id === 'red-basin') scenery(this.world, track);
-    else themedScenery(this.world, track);
+    themedScenery(this.world, track);
     landmarks(this.world, track);
     this.atmosphere = new Atmosphere(this.world, this.scene, track);
     this.effects.setTrack(track, this.atmosphere.mood);

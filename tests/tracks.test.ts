@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { Box3, Group, InstancedMesh, Matrix4, Vector3 } from 'three';
 import { LocalRace } from '../src/bots';
 import { getTrack, LAPS, SECTORS, SAMPLES, delta } from '../src/circuit';
 import { bump, drive, grid, PAD_LENGTH, PAD_WIDTH, pose } from '../src/drive';
 import { advance, checkpointAt, driver, validPose } from '../src/rules';
+import { themedScenery } from '../src/track-art';
 import { DEFAULT_TRACK, isTrackId, TRACK_IDS } from '../src/tracks';
 import { centerSteer } from './steering';
 
@@ -50,6 +52,33 @@ test('eight circuits have separate drivable closed courses, checkpoints and pads
     }
     assert.equal(d.checkpoint, LAPS * SECTORS, id);
     assert.ok(d.finish !== null && d.finish < 110_000, id);
+  }
+});
+
+test('scenery footprints clear the main road and branch on every circuit', () => {
+  const matrix = new Matrix4(), point = new Vector3();
+  for (const id of TRACK_IDS) {
+    const track = getTrack(id), world = new Group();
+    themedScenery(world, track);
+    const bounds: Box3[] = [];
+    for (const mesh of world.children) {
+      if (!(mesh instanceof InstancedMesh)) continue;
+      mesh.geometry.computeBoundingBox();
+      for (let i = 0; i < mesh.count; i++) {
+        mesh.getMatrixAt(i, matrix);
+        bounds.push(mesh.geometry.boundingBox!.clone().applyMatrix4(matrix));
+      }
+    }
+    assert.ok(bounds.length > 0, id);
+    for (let i = 0; i < SAMPLES; i++) {
+      const s = i / SAMPLES, half = track.widthAt(s) / 2, branch = track.branchAt(s);
+      const lanes = [-half - .5, -half / 2, 0, half / 2, half + .5];
+      if (branch) lanes.push(branch.center, branch.center - branch.width / 2, branch.center + branch.width / 2);
+      for (const lane of lanes) {
+        point.copy(track.point(s, lane, .5));
+        assert.equal(bounds.some(box => box.containsPoint(point)), false, `${id} at ${s}, lane ${lane}`);
+      }
+    }
   }
 });
 

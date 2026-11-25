@@ -4,14 +4,56 @@ import type { Circuit } from './circuit';
 type Shape = 'box' | 'cone' | 'stone' | 'mesa' | 'disc';
 type Instance = { x: number; y: number; z: number; w: number; h: number; d: number; color: string; yaw: number; roll: number };
 
+function roadCorridor(track: Circuit) {
+  const cells: T.Box3[] = [];
+  const count = Math.ceil(track.length / 2);
+  const span = (s: number, a: number, b: number) => {
+    const corners = [track.point(s, a), track.point(s, b), track.point(s, (a + b) / 2)];
+    const cell = new T.Box3().setFromPoints(corners);
+    cell.min.x -= 2; cell.max.x += 2;
+    cell.min.z -= 2; cell.max.z += 2;
+    cell.min.y -= .4; cell.max.y += 5;
+    cells.push(cell);
+  };
+  for (let i = 0; i < count; i++) {
+    const s = i / count, edge = track.widthAt(s) / 2;
+    span(s, -edge, edge);
+  }
+  const branch = track.branch;
+  if (branch) {
+    const steps = Math.ceil((branch.end - branch.start) * count * 2);
+    for (let i = 0; i < steps; i++) {
+      const s = branch.start + (branch.end - branch.start) * i / steps;
+      const { center, width } = track.branchAt(s)!;
+      span(s, center - width / 2, center + width / 2);
+    }
+  }
+  return cells;
+}
+
 export function themedScenery(world: T.Group, track: Circuit) {
   let seed = 84771 + track.id.length * 1729;
   const rand = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;
   const batches = new Map<string, { shape: Shape; glow: boolean; items: Instance[] }>();
+  const corridor = roadCorridor(track);
+  const o = new T.Object3D(), color = new T.Color(), bounds = new T.Box3();
+  const boxBounds = new T.Box3(new T.Vector3(-.5, -.5, -.5), new T.Vector3(.5, .5, .5));
+  const roundBounds = new T.Box3(new T.Vector3(-1, -.5, -1), new T.Vector3(1, .5, 1));
+  const stoneBounds = new T.Box3(new T.Vector3(-1, -1, -1), new T.Vector3(1, 1, 1));
+  const transform = ({x, y, z, w, h, d, yaw, roll}: Instance) => {
+    o.position.set(x, y, z);
+    o.scale.set(w, h, d);
+    o.rotation.set(0, yaw, roll, 'YXZ');
+    o.updateMatrix();
+  };
   const put = (shape: Shape, x: number, y: number, z: number, w: number, h: number, d: number, color: string, yaw = 0, roll = 0, glow = false) => {
+    const instance = { x, y, z, w, h, d, color, yaw, roll };
+    transform(instance);
+    bounds.copy(shape === 'box' ? boxBounds : shape === 'stone' ? stoneBounds : roundBounds).applyMatrix4(o.matrix);
+    if (corridor.some(cell => cell.intersectsBox(bounds))) return;
     const key = shape + glow;
     if (!batches.has(key)) batches.set(key, { shape, glow, items: [] });
-    batches.get(key)!.items.push({ x, y, z, w, h, d, color, yaw, roll });
+    batches.get(key)!.items.push(instance);
   };
   const floor = -1.2;
   const markers = Array.from({ length: 160 }, (_, i) => track.frame(i / 160));
@@ -50,6 +92,20 @@ export function themedScenery(world: T.Group, track: Circuit) {
   };
 
   switch (track.id) {
+    case 'red-basin': {
+      mountains(36, ['#965640','#b6694a','#985340'], 42);
+      for (const {x, z} of points(230, 14, 18, 135)) {
+        const w = .7 + rand() ** 3 * 14;
+        put('stone', x, floor + w * .27, z, w, w * (.35 + rand() * .6), w * .86,
+          choose(['#a64c35','#d59664','#deaa72','#985e4e']), rand() * 7);
+      }
+      for (const {x, z} of points(42, 13, 14, 74)) {
+        const h = 2.1 + rand() * 3.8;
+        put('mesa', x, floor + h / 2, z, .35, h, .35, '#649477');
+        for (const side of [-1, 1]) put('mesa', x + side * .58, floor + h * .55, z + side * .19, .23, h * .42, .23, '#649477', 0, -.53 * side);
+      }
+      break;
+    }
     case 'frostline': {
       mountains(29, ['#8aa2b7','#b2c4d4','#e1ecf3'], 62);
       for (const { x, z } of points(135, 12, 15, 68)) pine(x, z, 3.8 + rand() * 8.2, true);
@@ -208,15 +264,12 @@ export function themedScenery(world: T.Group, track: Circuit) {
     if (shape === 'disc') return new T.CylinderGeometry(1, 1, 1, 10);
     return new T.CylinderGeometry(.66, 1, 1, 7);
   };
-  const o = new T.Object3D(), color = new T.Color();
   for (const { shape, glow, items } of batches.values()) {
     const material = glow ? new T.MeshBasicMaterial() : new T.MeshLambertMaterial({ flatShading: true });
     const mesh = new T.InstancedMesh(geometry(shape), material, items.length);
     items.forEach((p, i) => {
-      o.position.set(p.x, p.y, p.z);
-      o.scale.set(p.w, p.h, p.d);
-      o.rotation.set(0, p.yaw, p.roll, 'YXZ');
-      o.updateMatrix(); mesh.setMatrixAt(i, o.matrix);
+      transform(p);
+      mesh.setMatrixAt(i, o.matrix);
       mesh.setColorAt(i, color.set(p.color));
     });
     world.add(mesh);
