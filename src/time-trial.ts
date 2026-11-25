@@ -2,32 +2,36 @@ import { COUNTDOWN, type Circuit } from './circuit';
 import { drive, grid, type Input, type Pose } from './drive';
 import { blendPose, encodeGhost, GHOST_INTERVAL, MAX_LAP_MS, type Replay } from './ghost';
 
+const MAX_FRAME_MS = 50;
+
 export class TimeTrial {
   readonly kart;
   readonly start: number;
   elapsed = 0;
   finished = false;
   replay?: Replay;
+  private lastFrame: number;
   private readonly samples: Pose[];
 
   constructor(readonly track: Circuit, now: number) {
     this.start = now + COUNTDOWN;
+    this.lastFrame = this.start;
     this.kart = { ...grid(0, track), s: 0, lane: 0, speed: 42 };
     this.samples = [this.snapshot()];
   }
 
   step(input: Input, now: number) {
-    if (this.finished || now <= this.start) return;
-    const end = now - this.start;
+    if (this.finished || now <= this.lastFrame) return;
+    const dt = Math.min(MAX_FRAME_MS, now - this.lastFrame);
+    this.lastFrame = now;
     const previous = this.elapsed;
-    if (end <= previous) return;
     const before = this.snapshot();
-    drive(this.kart, input, Math.min(.05, (end - previous) / 1000), this.track);
+    drive(this.kart, input, dt / 1000, this.track);
     let after = this.snapshot();
-    let elapsed = end;
+    let elapsed = previous + dt;
     if (after[0] >= 1) {
       const fraction = (1 - before[0]) / (after[0] - before[0]);
-      elapsed = previous + (end - previous) * fraction;
+      elapsed = previous + dt * fraction;
       after = blendPose(before, after, fraction);
       after[0] = this.kart.s = 1;
       this.finished = true;

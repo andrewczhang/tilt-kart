@@ -52,11 +52,29 @@ test('a time trial can submit a UUID generated without crypto.randomUUID', () =>
   assert.ok(validSubmission({ ...runLap(), name: 'LAN Driver', driverId }, TRACK_IDS[0]));
 });
 
-test('stalled runs time out without a replay', () => {
+test('runs time out after the simulated time limit without a replay', () => {
   const trial = new TimeTrial(getTrack(), 0);
-  trial.step(input, trial.start + MAX_LAP_MS + 100);
+  for (let t = trial.start + 50; !trial.finished && t <= trial.start + MAX_LAP_MS + 50; t += 50) {
+    trial.step({ ...input, gas: false }, t);
+  }
+  assert.equal(trial.elapsed, MAX_LAP_MS);
   assert.equal(trial.finished, true);
   assert.equal(trial.replay, undefined);
+});
+
+test('long frame gaps advance the lap clock and replay at the clamped physics rate', () => {
+  const track = getTrack();
+  const regular = new TimeTrial(track, 0);
+  const slowFrames = new TimeTrial(track, 0);
+  for (let i = 1; !regular.finished; i++) {
+    regular.step(input, regular.start + i * 50);
+    slowFrames.step(input, slowFrames.start + i * 200);
+    assert.equal(slowFrames.elapsed, regular.elapsed);
+    assert.equal(slowFrames.kart.s, regular.kart.s);
+  }
+  assert.ok(regular.replay);
+  assert.deepEqual(slowFrames.replay, regular.replay);
+  assert.ok(validSubmission({ ...slowFrames.replay, name: 'Driver', driverId: uuid }, track.id));
 });
 
 test('rejects implausible or malformed submissions', () => {
