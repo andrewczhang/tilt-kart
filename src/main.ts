@@ -495,6 +495,7 @@ function resetRace(me?: Driver) {
   remotes.clear();
   remoteSamples.clear();
   powerups.reset();
+  view.resetEffects();
   lastItemKey = '';
 }
 

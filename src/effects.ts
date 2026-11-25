@@ -154,7 +154,7 @@ class Trail {
 }
 
 type Racer = { id: string; pose: Pose; body: T.Object3D };
-type State = { trail: Trail; wheels: [T.Vector3, T.Vector3] | null; dust: number; sparks: number; exhaust: number };
+type State = { trail: Trail; wheels: [T.Vector3, T.Vector3] | null; dust: number; sparks: number; exhaust: number; last: T.Vector3 | null };
 
 const SPARK_TIERS = ['#ffd36b', '#47b6ff', '#ff4fb0'].map(c => new T.Color(c));
 const FLAME = ['#ffde7a', '#ff8a2a', '#ff4a1e'].map(c => new T.Color(c));
@@ -175,6 +175,7 @@ export class KartEffects {
   private dustRate = 1;
   private spray = false;
   private width = 15;
+  private track?: Circuit;
   private readonly v = new T.Vector3(); private readonly p = new T.Vector3(); private readonly fwd = new T.Vector3();
   private readonly side = new T.Vector3(); private readonly a = new T.Vector3(); private readonly b = new T.Vector3();
   private readonly c = new T.Color();
@@ -199,8 +200,13 @@ export class KartEffects {
     this.dustRate = mood.dust;
     this.spray = !!mood.spray;
     this.width = track.width;
+    this.track = track;
+    this.reset();
+  }
+
+  reset() {
     this.hot.clear(); this.soft.clear(); this.skids.clear();
-    for (const s of this.states.values()) s.wheels = null;
+    for (const s of this.states.values()) { s.wheels = null; s.last = null; }
   }
 
   update(racers: Racer[], dt: number, scale: number) {
@@ -210,7 +216,7 @@ export class KartEffects {
       seen.add(id);
       let state = this.states.get(id);
       if (!state) {
-        state = { trail: new Trail(this.trailMaterial), wheels: null, dust: 0, sparks: 0, exhaust: 0 };
+        state = { trail: new Trail(this.trailMaterial), wheels: null, dust: 0, sparks: 0, exhaust: 0, last: null };
         this.root.add(state.trail.mesh);
         this.states.set(id, state);
       }
@@ -222,14 +228,30 @@ export class KartEffects {
     this.soft.material.uniforms.scale.value = scale;
   }
 
+  private onRoad(s: number, lane: number, w: T.Vector3) {
+    const track = this.track;
+    if (!track) return w;
+    const o = track.point(s, lane), f = track.point(s + 1 / track.length, lane).sub(o), r = track.point(s, lane + 1).sub(o);
+    const dx = w.x - o.x, dz = w.z - o.z, det = f.x * r.z - f.z * r.x;
+    if (Math.abs(det) < 1e-6) return w;
+    const along = (dx * r.z - dz * r.x) / det, across = (f.x * dz - f.z * dx) / det;
+    w.y = o.y + along * f.y + across * r.y + .03;
+    return w;
+  }
+
   private racer(state: State, pose: Pose, body: T.Object3D, dt: number) {
-    const [, lane, , speed, drift, boost] = pose;
+    const [s, lane, , poseSpeed, poseDrift, poseBoost] = pose;
     body.updateWorldMatrix(true, false);
     const m = body.matrixWorld;
+    const at = new T.Vector3().setFromMatrixPosition(m);
+    const moved = state.last && dt > 0 ? at.distanceTo(state.last) / dt : 0;
+    state.last = at;
+    const speed = moved > 2 ? poseSpeed : 0;
+    const drift = poseDrift > .02 ? poseDrift : 0, boost = poseBoost > .02 ? poseBoost : 0;
     this.fwd.set(m.elements[8], m.elements[9], m.elements[10]).normalize();
     this.side.set(m.elements[0], m.elements[1], m.elements[2]).normalize();
     const drifting = drift > 0 && speed > 15;
-    const wheels = local.wheels.map(w => w.clone().applyMatrix4(m)) as [T.Vector3, T.Vector3];
+    const wheels = local.wheels.map(w => this.onRoad(s, lane, w.clone().applyMatrix4(m))) as [T.Vector3, T.Vector3];
     if (drifting && state.wheels && dt > 0) {
       for (let i = 0; i < 2; i++) {
         const half = this.side.clone().multiplyScalar(.15);

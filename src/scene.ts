@@ -222,6 +222,7 @@ export class View {
     this.powerupScene = new PowerupScene(this.scene);
     this.setTrack(RED_BASIN);
   }
+  resetEffects() { this.effects.reset(); }
   setTrack(track: Circuit) {
     if (this.world && track.id === this.track.id) return;
     if (this.world) {
