@@ -1,8 +1,10 @@
 import * as T from 'three';
+import { Atmosphere } from './atmosphere';
 import { COLORS, RED_BASIN, SAMPLES, type Circuit } from './circuit';
 import { PAD_LENGTH, PAD_WIDTH, type Pose } from './drive';
 import type { PowerupState } from './powerups';
 import { PowerupScene } from './powerups-scene';
+import { KartEffects } from './effects';
 import { themedScenery } from './track-art';
 import { TRACK_IDS } from './tracks';
 
@@ -209,6 +211,8 @@ export class View {
   private followDistance = 10.5;
   private readonly labels = new Map<string, HTMLSpanElement>();
   private world?: T.Group;
+  private atmosphere?: Atmosphere;
+  private readonly effects = new KartEffects(this.scene);
   private track = RED_BASIN;
   private resetCamera = false;
   private readonly powerupScene: PowerupScene;
@@ -218,9 +222,11 @@ export class View {
     this.powerupScene = new PowerupScene(this.scene);
     this.setTrack(RED_BASIN);
   }
+  resetEffects() { this.effects.reset(); }
   setTrack(track: Circuit) {
     if (this.world && track.id === this.track.id) return;
     if (this.world) {
+      this.atmosphere?.dispose();
       const geometries = new Set<T.BufferGeometry>(), materials = new Set<T.Material>();
       this.world.traverse(node => {
         if (!(node instanceof T.Mesh)) return;
@@ -247,6 +253,8 @@ export class View {
     circuit(this.world, track);
     if (track.id === 'red-basin') scenery(this.world, track);
     else themedScenery(this.world, track);
+    this.atmosphere = new Atmosphere(this.world, this.scene, track);
+    this.effects.setTrack(track, this.atmosphere.mood);
     this.scene.add(this.world);
     this.powerupScene.setTrack(track);
   }
@@ -307,6 +315,9 @@ export class View {
       this.camera.lookAt(focus);
     }
     this.resetCamera = false;
+    const pixels = this.canvas.height / (2 * Math.tan(T.MathUtils.degToRad(this.camera.fov) / 2));
+    this.effects.update(actors.filter(a => !a.ghostColor).map(a => ({ id: a.id, pose: a.pose, body: this.models.get(a.id)!.body })), dt, pixels);
+    this.atmosphere?.update(dt, this.camera, pixels);
     this.renderer.render(this.scene, this.camera);
     for (const [id, label] of this.labels) {
       const pos = this.models.get(id)!.root.position.clone(); pos.y += 2.18;
