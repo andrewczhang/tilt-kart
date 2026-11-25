@@ -1,10 +1,11 @@
 import { readPreference, writePreference } from './preferences';
+import type { TrackId } from './tracks';
 
 const MUTE_KEY = 'tilt-kart-music-muted';
 const VOLUME = .55;
 
 export class RaceMusic {
-  private track?: string;
+  private track?: TrackId;
   private request?: AbortController;
   private playing?: { source: AudioBufferSourceNode; gain: GainNode };
   muted: boolean;
@@ -15,7 +16,7 @@ export class RaceMusic {
     if (saved === null) writePreference(MUTE_KEY, String(this.muted));
   }
 
-  start(track: string) {
+  start(track: TrackId) {
     this.stop();
     this.track = track;
     if (!this.muted) void this.play();

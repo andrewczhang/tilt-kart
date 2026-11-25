@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
+import { statSync } from 'node:fs';
 import { test, type TestContext } from 'node:test';
 import { RaceMusic } from '../src/music';
+import { TRACK_IDS } from '../src/tracks';
+
+test('every circuit ships an MP3 for its soundtrack', () => {
+  for (const id of TRACK_IDS) {
+    const mix = new URL(`../public/music/${id}.mp3`, import.meta.url);
+    assert.ok(statSync(mix).size > 0, `${id} has no soundtrack`);
+  }
+});
 
 function audioHarness() {
   const nodes: ReturnType<typeof makeSource>[] = [];
@@ -37,9 +46,9 @@ const mockDownload = (t: TestContext) => t.mock.method(globalThis, 'fetch',
 test('race music loops the selected map and stops when the race ends', async t => {
   const downloads = mockDownload(t);
   const { music, nodes, volumes } = audioHarness();
-  music.start('red-basin');
+  music.start('frostline');
   await nextTurn();
-  assert.equal(downloads.mock.calls[0].arguments[0], '/music/red-basin.mp3');
+  assert.equal(downloads.mock.calls[0].arguments[0], '/music/frostline.mp3');
   assert.equal(nodes.length, 1);
   assert.equal(nodes[0].loop, true);
   assert.ok(volumes.at(-1)! > 0);

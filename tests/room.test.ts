@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { test } from 'node:test';
-import { LAPS, LIMIT } from '../src/circuit';
+import { LAPS, LIMIT, getTrack } from '../src/circuit';
 import { type Pose } from '../src/drive';
 import { driver, type ServerMessage } from '../src/rules';
 
@@ -118,4 +118,32 @@ test('racers resume their saved kart, late arrivals watch, and the host can star
   assert.deepEqual(grid.drivers, [driver(host.welcome.id, 'Host', 0), driver(watcher.welcome.id, 'Guest', 2), driver(returned.welcome.id, 'Guest', 1)]);
   await send(host.socket, 'start');
   assert.ok(watcher.socket.take('room').room.start);
+
+  now += LIMIT + 4000;
+  await send(host.socket, 'status');
+  await send(host.socket, 'rematch');
+  await send(watcher.socket, 'track:mesa');
+  const track = getTrack('cedar');
+  await send(host.socket, 'track:cedar');
+  const selected = watcher.socket.take('room').room;
+  assert.equal(selected.track, 'cedar');
+  for (const d of selected.drivers) assert.deepEqual(d.pose, driver(d.id, d.name, d.slot, track).pose);
+  const cedarGuest = await join('Cedar guest');
+  assert.equal(cedarGuest.welcome.room.track, 'cedar');
+  await send(host.socket, 'start');
+  now += 9000;
+  const cedarPose: Pose = [.23, 1, 0, 42, 0, 0];
+  await send(cedarGuest.socket, cedarPose);
+  assert.equal(host.socket.take('state').checkpoint, 1);
+  await room.webSocketClose(ws(cedarGuest.socket), 1000, '');
+  const resumed = await join('Cedar guest', cedarGuest.token);
+  assert.equal(resumed.welcome.room.track, 'cedar');
+  assert.deepEqual(resumed.welcome.room.drivers.find(d => d.id === resumed.welcome.id)?.pose, cedarPose);
+  now += LIMIT;
+  await send(host.socket, 'status');
+  await send(host.socket, 'rematch');
+  const nextGrid = resumed.socket.take('room').room;
+  assert.equal(nextGrid.start, null);
+  assert.equal(nextGrid.track, 'cedar');
+  for (const d of nextGrid.drivers) assert.deepEqual(d.pose, driver(d.id, d.name, d.slot, track).pose);
 });

@@ -1,13 +1,15 @@
 import './style.css';
 import { Motor } from './audio';
 import { LocalRace, MAX_RACERS } from './bots';
-import { COLORS, COUNTDOWN, LAPS, LIMIT, clamp, point } from './circuit';
+import { COLORS, COUNTDOWN, LAPS, LIMIT, clamp, getTrack } from './circuit';
 import { Controls } from './controls';
 import { drive, grid, pose, type Kart, type Pose } from './drive';
 import { RaceMusic } from './music';
 import { readPreference, writePreference } from './preferences';
 import { driver, rank, type Driver, type RoomState, type ServerMessage } from './rules';
 import { View } from './scene';
+import { drawTrackMap, trackSelector, trackTag } from './track-ui';
+import { DEFAULT_TRACK, isTrackId, type TrackId } from './tracks';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const ui = $('interface');
@@ -24,14 +26,14 @@ let localRace: LocalRace | undefined;
 let issue = '', starting = false, joining = false;
 let followed = '', checkedDeadline: number | null = null;
 let view: View;
+let practiceTrack: TrackId = DEFAULT_TRACK;
+let track = getTrack();
 const remotes = new Map<string, Pose>();
 const preview = driver('preview', '', 0);
-const mapPath = Array.from({ length: 121 }, (_, i) => point(i / 120));
 const show = (html: string) => { ui.innerHTML = html; };
 const button = (id: string, label: string, alt = false) => `<button id="${id}" class="action${alt ? ' alt' : ''}" type="button">${label}</button>`;
 const doOn = (id: string, fn: () => void) => { $(id).onclick = fn; };
-const sceneTag = '<p class="callout"><strong>01</strong>Red Basin Circuit</p>';
-const identity = '<p class="identity">Tilt Kart / Red Basin</p>';
+const identity = '<p class="identity">Tilt Kart</p>';
 const doAfterGesture = () => {
   motor.start();
   if (touch.touch) void touch.enableTilt();
@@ -39,12 +41,29 @@ const doAfterGesture = () => {
 const notes = () => touch.touch ? 'Rotate to landscape. Hold your phone like a wheel. Automatic throttle.' : 'Drive with WASD or arrow keys. Hold brake and turn to drift; release for a boost.';
 const tokenKey = () => `tilt-kart-room-${code}`;
 
+function displayTrack(id: TrackId) {
+  track = getTrack(id);
+  view.setTrack(track);
+}
+
+function bindTrackPicker(onChange: (id: TrackId) => void) {
+  const select = ui.querySelector('select')!;
+  select.onchange = () => { if (isTrackId(select.value)) onChange(select.value); };
+}
+
 function menu() {
   if (screen === 'home') {
+    displayTrack(practiceTrack);
     show(`<section class="poster">${identity}<h1 class="title">Tilt <span>Kart</span></h1>
-      <p class="intro">Three laps through Red Basin. Send a link to race up to seven friends.</p>
+      <p class="intro">Eight circuits, three laps each. Send a link to race up to seven friends.</p>
+      ${trackSelector(practiceTrack)}
       <div class="actions">${button('create', 'Create room')}${button('bots', 'Vs bots', true)}${button('solo', 'Solo practice', true)}</div>
-      <p class="help">${notes()}</p></section>${sceneTag}`);
+      <p class="help">${notes()}</p></section>${trackTag(track)}`);
+    bindTrackPicker(id => {
+      practiceTrack = id;
+      displayTrack(id);
+      $('track-callout').outerHTML = trackTag(track);
+    });
     doOn('create', () => { screen = 'join'; menu(); });
     doOn('bots', () => { screen = 'bots'; menu(); });
     doOn('solo', () => { doAfterGesture(); startLocal(1); });
@@ -58,7 +77,7 @@ function menu() {
     show(`<section class="poster compact">${identity}<h2 class="title">Vs bots</h2>
       <form class="setup" id="bot-setup"><label for="racers">Total racers</label><select id="racers" name="racers">${options}</select>
       <div class="actions"><button class="action" type="submit">Start race</button>${button('back', 'Back', true)}</div></form>
-      <p class="help">${notes()}</p></section>${sceneTag}`);
+      <p class="help">${notes()}</p></section>${trackTag(track)}`);
     const setup = $<HTMLFormElement>('bot-setup');
     setup.onsubmit = e => {
       e.preventDefault();
@@ -75,7 +94,7 @@ function menu() {
       <form class="setup" id="setup"><label for="driver">Driver name</label>
       <input id="driver" maxlength="20" autocomplete="nickname" required placeholder="Your name">
       <div class="actions"><button class="action" id="join" type="submit">${rejoining ? 'Rejoin room' : code ? 'Join room' : 'Create room'}</button>${button('back', 'Back', true)}</div></form>
-      <p class="notice" role="status" id="notice"></p><p class="help">${notes()}</p></section>${sceneTag}`);
+      <p class="notice" role="status" id="notice"></p><p class="help">${notes()}</p></section>${code ? '' : trackTag(track)}`);
     $<HTMLInputElement>('driver').value = readPreference('tilt-kart-name') ?? '';
     $('notice').textContent = issue;
     $<HTMLFormElement>('setup').onsubmit = e => {
@@ -91,10 +110,17 @@ function menu() {
   }
   if (screen === 'lobby' && room) {
     const isHost = room.host === player;
+    displayTrack(room.track ?? DEFAULT_TRACK);
+    const pickerFocused = document.activeElement?.id === 'track-select';
     show(`<section class="poster compact">${identity}<h2 class="title">Starting grid</h2>
       <div id="room-code">Room ${code} · ${room.drivers.length}/8 drivers</div><ol class="list" id="roster"></ol>
+      ${isHost ? trackSelector(track.id) : `<p class="lobby-track">Track: <strong>${track.name}</strong></p>`}
       <div class="actions">${button('share', 'Invite friends', true)}${isHost ? button('start', 'Start race') : ''}${button('leave', 'Leave', true)}</div>
-      <p class="notice" id="notice" role="status"></p></section>${sceneTag}`);
+      <p class="notice" id="notice" role="status"></p></section>${trackTag(track)}`);
+    if (isHost) {
+      bindTrackPicker(id => { if (socket?.readyState === WebSocket.OPEN) socket.send(`track:${id}`); });
+      if (pickerFocused) $('track-select').focus();
+    }
     $('notice').textContent = issue || (isHost ? 'Start when your friends are on the grid.' : 'Waiting for the host to start.');
     fillList($('roster'), [...room.drivers].sort((a, b) => a.slot - b.slot), d => d.id === room?.host ? 'Host' : '');
     doOn('leave', home);
@@ -230,7 +256,7 @@ function receiveRoom(next: RoomState) {
 
 function startLocal(racers: number) {
   close();
-  localRace = new LocalRace(racers, Date.now() + COUNTDOWN);
+  localRace = new LocalRace(racers, Date.now() + COUNTDOWN, getTrack(practiceTrack));
   player = localRace.human.id;
   clock = 0;
   room = localRace.room;
@@ -245,7 +271,8 @@ function updateTilt() {
 }
 
 function resetRace(me?: Driver) {
-  local = localRace?.kart ?? grid(me?.slot ?? 0);
+  displayTrack(room?.track ?? DEFAULT_TRACK);
+  local = localRace?.kart ?? grid(me?.slot ?? 0, track);
   if (!localRace && me) {
     [local.s, local.lane, local.yaw, local.speed, local.drift, local.boost] = me.pose;
   }
@@ -260,7 +287,7 @@ function spectate() {
   resetRace();
   show(`<div class="hud" aria-label="Race overview">
       <div class="hud-box" role="status"><strong>Spectating</strong><small>You’re on the grid next race.</small></div>
-      <canvas id="map" class="map" width="160" height="130" aria-label="Circuit map"></canvas></div>
+      <canvas id="map" class="map" width="160" height="130" aria-label="${track.name} circuit map"></canvas></div>
     <div class="hud-actions"><button class="tool" id="exit">Exit</button></div>`);
   doOn('exit', home);
 }
@@ -268,12 +295,12 @@ function spectate() {
 function begin() {
   screen = 'race';
   resetRace(room!.drivers.find(d => d.id === player));
-  music.start('red-basin');
+  music.start(track.id);
   show(`<div class="hud" aria-label="Race overview">
       <div class="hud-box"><small>Lap</small><em id="lap">1/3</em></div>
       <div class="hud-box"><small>Place</small><em id="place">1/${room!.drivers.length}</em></div>
       <div class="hud-box"><small>km/h</small><em id="speed">0</em></div>
-      <canvas id="map" class="map" width="160" height="130" aria-label="Circuit map"></canvas>
+      <canvas id="map" class="map" width="160" height="130" aria-label="${track.name} circuit map"></canvas>
     </div>
     <div class="hud-actions"><button class="tool" id="tilt"${touch.touch ? '' : ' hidden'}>Enable tilt</button><button class="tool" id="sound"></button><button class="tool" id="music"></button><button class="tool" id="exit">Exit</button></div>
     <div class="status" id="status" role="status"></div><div class="rotate">Turn sideways for a wider view</div>
@@ -312,7 +339,7 @@ function results() {
   screen = 'results';
   const racers = localRace?.racers;
   const rematch = !localRace && room?.host === player;
-  show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet">${identity}
+  show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet"><p class="identity">Tilt Kart / ${track.name}</p>
     <h2 class="title" id="result-title">${racers === 1 ? 'Practice results' : 'Race results'}</h2>
     <ol class="list" id="results-list"></ol><p id="result-status"></p>
     <div class="actions">${button('back', 'Main menu', true)}${racers ? button('retry', 'Race again') : rematch ? button('retry', 'Rematch') : ''}</div>
@@ -338,20 +365,6 @@ function set(id: string, value: string) {
   if (el.textContent !== value) el.textContent = value;
 }
 
-function drawMap(actors: Driver[]) {
-  const canvas = $<HTMLCanvasElement>('map'), ctx = canvas.getContext('2d')!;
-  const tx = (x: number) => x * .44 + 83, ty = (z: number) => z * .44 + 69;
-  ctx.clearRect(0, 0, 160, 130);
-  ctx.beginPath(); ctx.lineWidth = 3; ctx.strokeStyle = '#aebbb6';
-  for (const [i, p] of mapPath.entries()) if (i) ctx.lineTo(tx(p.x), ty(p.z)); else ctx.moveTo(tx(p.x), ty(p.z));
-  ctx.stroke();
-  for (const actor of [...actors.filter(d => d.id !== player), ...actors.filter(d => d.id === player)]) {
-    const p = point(actor.pose[0]);
-    ctx.beginPath(); ctx.fillStyle = COLORS[actor.slot];
-    ctx.arc(tx(p.x), ty(p.z), actor.id === player ? 4.5 : 3.3, 0, 2 * Math.PI); ctx.fill();
-  }
-}
-
 let last = performance.now();
 function tick(now: number) {
   const dt = Math.min(.05, (now - last) / 1000);
@@ -367,7 +380,7 @@ function tick(now: number) {
       if (screen === 'race' && (me?.finish != null || room.complete)) results();
       else if (screen === 'results' && changed) updateResults();
     } else if (active) {
-      drive(local, touch.input(), dt);
+      drive(local, touch.input(), dt, track);
     }
     const mine = pose(local);
     if (!localRace && !room.complete && elapsed >= LIMIT && checkedDeadline !== room.start && socket?.readyState === WebSocket.OPEN) {
@@ -397,7 +410,7 @@ function tick(now: number) {
       set('status', elapsed < 0 ? String(Math.min(3, Math.ceil(-elapsed / 1000))) : elapsed < 630 ? 'GO!' : '');
       $('boost').style.transform = `scaleX(${local.boost > 0 ? clamp(local.boost / 1.5, 0, 1) : local.drift})`;
     }
-    if (screen === 'race' || screen === 'spectate') drawMap(visible);
+    if (screen === 'race' || screen === 'spectate') drawTrackMap($<HTMLCanvasElement>('map'), track, visible, player);
     motor.update(active || screen === 'race' && elapsed < 0 ? local : undefined);
     const target = !me ? visible.find(d => d.id === followed && d.finish === null) ?? visible.find(d => d.finish === null) ?? visible[0] : undefined;
     followed = target?.id ?? '';
