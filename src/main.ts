@@ -7,13 +7,13 @@ import { cupItinerary, cupSelector, fillCupResults } from './cup-ui';
 import { CUPS, CUP_IDS, cupTrack, isCupId, newCup, nextRound, type Cup } from './cups';
 import { bump, drive, grid, pose, remoteContact, sampleRemote, substep, type Kart, type Pose, type RemoteSample } from './drive';
 import { newDriverId } from './driver-id';
-import { decodeGhost, ghostPose, ghostTimeAt, type Ghost, type Replay, type Standing } from './ghost';
+import { ghostPose, ghostTimeAt, type Replay, type Standing } from './ghost';
 import { RaceMusic } from './music';
 import { POWERUPS, PowerupState, type ItemEvent, type PowerupCallbacks, type PowerupId } from './powerups';
 import { readPreference, writePreference } from './preferences';
 import { rank, type Driver, type RoomState, type ServerMessage } from './rules';
 import { View, type Actor } from './scene';
-import { TimeTrial } from './time-trial';
+import { lapGhost, personalGhost, savePersonalGhost, TimeTrial, type LapGhost } from './time-trial';
 import { drawTrackMap, trackSelector, trackTag } from './track-ui';
 import { courseLayoutKey, DEFAULT_TRACK, isTrackId, type TrackId } from './tracks';
 import { formatTime, RaceTiming } from './timing';
@@ -34,7 +34,6 @@ let player = '', local = grid(0), room: RoomState | undefined;
 let localRace: LocalRace | undefined;
 let timing = new RaceTiming();
 let timingKey = '';
-type LapGhost = { replay: Replay; decoded: Ghost };
 type Trial = { race: TimeTrial; name: string; personal?: LapGhost; world?: LapGhost };
 let trial: Trial | undefined;
 let trialDriverId: string | undefined;
@@ -207,18 +206,7 @@ function menu() {
   }
 }
 
-function trialKey(id: TrackId) { return `tilt-kart-trial-best-${courseLayoutKey(id)}`; }
 function trialUrl(id: TrackId) { return `/api/tt/${courseLayoutKey(id)}`; }
-
-function lapGhost(replay: Replay | null): LapGhost | undefined {
-  if (!replay || typeof replay.ghost !== 'string') return;
-  const decoded = decodeGhost(replay.lapMs, replay.ghost);
-  if (decoded) return { replay, decoded };
-}
-
-function personalGhost(id: TrackId) {
-  try { return lapGhost(JSON.parse(readPreference(trialKey(id)) ?? 'null')); } catch { return; }
-}
 
 async function trialRequest<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, options);
@@ -575,7 +563,7 @@ function trialResults(attempt: Trial) {
   const replay = race.replay;
   if (replay) motor.finish();
   const improved = replay && (!personal || replay.lapMs < personal.replay.lapMs);
-  if (improved) writePreference(trialKey(race.track.id), JSON.stringify(replay));
+  if (improved) savePersonalGhost(race.track.id, replay);
   const best = improved ? replay : personal?.replay;
   show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet"><p class="identity">Time trial / ${race.track.name}</p>
     <h2 class="title" id="result-title">${replay ? formatLap(replay.lapMs) : race.interrupted ? 'Lap interrupted' : 'Time expired'}</h2>

@@ -1,6 +1,26 @@
 import { COUNTDOWN, type Circuit } from './circuit';
 import { drive, grid, type Input, type Pose } from './drive';
-import { blendPose, encodeGhost, GHOST_INTERVAL, MAX_LAP_MS, type Replay } from './ghost';
+import { blendPose, decodeGhost, encodeGhost, GHOST_INTERVAL, MAX_LAP_MS, type Ghost, type Replay } from './ghost';
+import { readPreference, writePreference } from './preferences';
+import { courseLayoutKey, type TrackId } from './tracks';
+
+export type LapGhost = { replay: Replay; decoded: Ghost };
+
+function trialKey(id: TrackId) { return `tilt-kart-trial-best-v2-${courseLayoutKey(id)}`; }
+
+export function lapGhost(replay: Replay | null): LapGhost | undefined {
+  if (!replay || typeof replay.ghost !== 'string') return;
+  const decoded = decodeGhost(replay.lapMs, replay.ghost);
+  if (decoded) return { replay, decoded };
+}
+
+export function personalGhost(id: TrackId) {
+  try { return lapGhost(JSON.parse(readPreference(trialKey(id)) ?? 'null')); } catch { return; }
+}
+
+export function savePersonalGhost(id: TrackId, replay: Replay) {
+  writePreference(trialKey(id), JSON.stringify(replay));
+}
 
 const STEP_MS = 10;
 const MAX_FRAME_GAP_MS = 1000;

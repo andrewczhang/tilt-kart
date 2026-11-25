@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Motor } from '../src/audio';
 import { Controls } from '../src/controls';
+import { encodeGhost } from '../src/ghost';
 import { readPreference, writePreference } from '../src/preferences';
+import { personalGhost, savePersonalGhost } from '../src/time-trial';
 import { RaceTiming } from '../src/timing';
+import { courseLayoutKey } from '../src/tracks';
 import { RaceWakeLock } from '../src/wake';
 
 function setGlobals(globals: PropertyDescriptorMap) {
@@ -35,6 +38,24 @@ test('blocked local storage does not prevent loading or changing preferences', (
     assert.equal(motor.muted, true);
     assert.equal(readPreference('tilt-kart-name'), null);
     assert.doesNotThrow(() => writePreference('tilt-kart-name', 'Ari'));
+  });
+});
+
+test('time trial personal bests ignore old-clock ghosts and retain wall-clock ghosts', () => {
+  const track = 'frostline';
+  const replay = { lapMs: 50, ghost: encodeGhost([[0, 0, 0, 42, 0, 0], [1, 0, 0, 42, 0, 0]]) };
+  const oldKey = `tilt-kart-trial-best-${courseLayoutKey(track)}`;
+  const oldReplay = JSON.stringify({ ...replay, lapMs: 49 });
+  const storage = new Map([[oldKey, oldReplay]]);
+  withGlobals({ localStorage: { configurable: true, value: {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+  } } }, () => {
+    assert.equal(personalGhost(track), undefined);
+    savePersonalGhost(track, replay);
+    assert.deepEqual(personalGhost(track)?.replay, replay);
+    assert.equal(storage.get(oldKey), oldReplay);
+    assert.equal(personalGhost('mesa'), undefined);
   });
 });
 
