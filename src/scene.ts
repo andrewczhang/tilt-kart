@@ -8,6 +8,7 @@ import { KartEffects } from './effects';
 import { themedScenery } from './track-art';
 import { landmarks } from './track-landmarks';
 import { TRACK_IDS } from './tracks';
+import { layoutNameplates } from './nameplates';
 
 const flat = (color: T.ColorRepresentation) => new T.MeshLambertMaterial({ color, flatShading: true });
 const white = flat('#f7e6c9'), coral = flat('#e94d30'), navy = flat('#222b36');
@@ -305,12 +306,25 @@ export class View {
     this.effects.update(actors.filter(a => !a.ghostColor).map(a => ({ id: a.id, pose: a.pose, body: this.models.get(a.id)!.body })), dt, pixels);
     this.atmosphere?.update(dt, this.camera, pixels);
     this.renderer.render(this.scene, this.camera);
+    const plates = [];
     for (const [id, label] of this.labels) {
       const pos = this.models.get(id)!.root.position.clone(); pos.y += 2.18;
-      const dist = pos.distanceTo(this.camera.position);
+      const distance = pos.distanceTo(this.camera.position);
       pos.project(this.camera);
-      label.hidden = menu || dist > 67 || pos.z > 1 || pos.z < 0 || Math.abs(pos.x) > 1 || Math.abs(pos.y) > 1;
-      label.style.transform = `translate(${(pos.x + 1) * width / 2}px,${(1 - pos.y) * height / 2}px) translate(-50%, -50%)`;
+      if (menu || id === own || distance > 67 || pos.z > 1 || pos.z < 0 || Math.abs(pos.x) > 1 || Math.abs(pos.y) > 1) {
+        label.style.visibility = 'hidden';
+        continue;
+      }
+      plates.push({
+        label, distance, x: (pos.x + 1) * width / 2, y: (1 - pos.y) * height / 2,
+        width: label.offsetWidth, height: label.offsetHeight,
+      });
+    }
+    const layout = layoutNameplates(plates, width, height);
+    for (const plate of plates) {
+      const position = layout.get(plate);
+      plate.label.style.visibility = position ? '' : 'hidden';
+      if (position) plate.label.style.transform = `translate(${position.left}px,${position.top}px)`;
     }
   }
 }
