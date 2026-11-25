@@ -316,7 +316,7 @@ export class View {
     }
     this.resetCamera = false;
     const pixels = this.canvas.height / (2 * Math.tan(T.MathUtils.degToRad(this.camera.fov) / 2));
-    this.effects.update(actors.map(a => ({ id: a.id, pose: a.pose, body: this.models.get(a.id)!.body })), dt, pixels);
+    this.effects.update(actors.filter(a => !a.ghostColor).map(a => ({ id: a.id, pose: a.pose, body: this.models.get(a.id)!.body })), dt, pixels);
     this.atmosphere?.update(dt, this.camera, pixels);
     this.renderer.render(this.scene, this.camera);
     for (const [id, label] of this.labels) {
