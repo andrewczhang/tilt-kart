@@ -167,3 +167,22 @@ test('a clamped local finish uses the crossing time instead of the end of the fr
   timing.step(2.9, 3, 30_020, 40, 30_005);
   assert.deepEqual(timing.splits(true), [undefined, undefined, 11_005]);
 });
+
+test('personal bests are separate for each circuit', () => {
+  const values = new Map<string, string>();
+  withGlobals({
+    localStorage: { configurable: true, value: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    } },
+  }, () => {
+    const basin = new RaceTiming();
+    basin.step(.9, 1.1, 10_010, 20);
+    assert.deepEqual(basin.records(30_000), { lap: 10_000, race: 30_000 });
+    const arena = new RaceTiming('arena');
+    assert.deepEqual(arena.records(null), { lap: Infinity, race: Infinity });
+    arena.step(.9, 1.1, 20_010, 20);
+    assert.deepEqual(arena.records(50_000), { lap: 20_000, race: 50_000 });
+    assert.deepEqual(new RaceTiming().records(null), { lap: 10_000, race: 30_000 });
+  });
+});
