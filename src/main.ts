@@ -4,6 +4,7 @@ import { LocalRace, MAX_RACERS } from './bots';
 import { COLORS, COUNTDOWN, LAPS, clamp, point } from './circuit';
 import { Controls } from './controls';
 import { drive, grid, pose, type Kart, type Pose } from './drive';
+import { RaceMusic } from './music';
 import { readPreference, writePreference } from './preferences';
 import { driver, rank, type Driver, type RoomState, type ServerMessage } from './rules';
 import { View } from './scene';
@@ -12,6 +13,7 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const ui = $('interface');
 const touch = new Controls(updateTilt, () => screen === 'race');
 const motor = new Motor();
+const music = new RaceMusic(() => motor.start(), motor.muted);
 const route = /^\/r\/([0-9a-z]{8})\/?$/i.exec(location.pathname);
 let code = route?.[1].toUpperCase() ?? '';
 let screen: 'home' | 'bots' | 'join' | 'lobby' | 'race' | 'results' = code ? 'join' : 'home';
@@ -129,6 +131,7 @@ function fillList(list: HTMLElement, drivers: Driver[], status: (d: Driver) => s
 }
 
 function close() {
+  music.stop();
   clearInterval(heartbeat);
   const prev = socket;
   socket = undefined;
@@ -235,6 +238,7 @@ function updateTilt() {
 
 function begin() {
   screen = 'race';
+  music.start('red-basin');
   const me = room!.drivers.find(d => d.id === player)!;
   local = localRace?.kart ?? grid(me.slot);
   sent = 0;
@@ -246,7 +250,7 @@ function begin() {
       <div class="hud-box"><small>km/h</small><em id="speed">0</em></div>
       <canvas id="map" class="map" width="160" height="130" aria-label="Circuit map"></canvas>
     </div>
-    <div class="hud-actions"><button class="tool" id="tilt"${touch.touch ? '' : ' hidden'}>Enable tilt</button><button class="tool" id="sound"></button><button class="tool" id="exit">Exit</button></div>
+    <div class="hud-actions"><button class="tool" id="tilt"${touch.touch ? '' : ' hidden'}>Enable tilt</button><button class="tool" id="sound" aria-label="Sound effects"></button><button class="tool" id="music" aria-label="Music"></button><button class="tool" id="exit">Exit</button></div>
     <div class="status" id="status" role="status"></div><div class="rotate">Turn sideways for a wider view</div>
     <div class="boost" aria-label="Drift boost"><i id="boost"></i></div>
     <div class="touch"${touch.touch ? '' : ' hidden'}><button id="left">Left</button><button id="right">Right</button><button id="brake">Brake / Drift</button></div>`);
@@ -263,9 +267,15 @@ function begin() {
       else updateTilt();
     });
   });
-  const labelSound = () => { $('sound').textContent = motor.muted ? 'Sound off' : 'Sound on'; };
-  hudAction('sound', () => { motor.toggle(); labelSound(); });
-  labelSound();
+  const labelAudio = () => {
+    $('sound').textContent = motor.muted ? 'FX off' : 'FX on';
+    $('sound').setAttribute('aria-pressed', String(!motor.muted));
+    $('music').textContent = music.muted ? 'Music off' : 'Music on';
+    $('music').setAttribute('aria-pressed', String(!music.muted));
+  };
+  hudAction('sound', () => { motor.toggle(); labelAudio(); });
+  hudAction('music', () => { music.toggle(); labelAudio(); });
+  labelAudio();
   hudAction('exit', home);
 }
 
@@ -275,6 +285,7 @@ function formatTime(ms: number) {
 }
 
 function results() {
+  music.stop();
   screen = 'results';
   const racers = localRace?.racers;
   show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet">${identity}
