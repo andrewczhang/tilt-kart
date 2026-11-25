@@ -67,14 +67,21 @@ export class BotPilot {
       .filter(rival => Math.abs(rival.gap) < 26);
   }
 
-  private canShift(kart: Kart, lane: number, rivals: Rival[]) {
+  private canShift(kart: Kart, lane: number, rivals: Rival[], passing?: Rival) {
     const lo = Math.min(kart.lane, lane) - 1.45;
     const hi = Math.max(kart.lane, lane) + 1.45;
     return !rivals.some(rival => {
+      if (rival === passing && this.canCreepPast(kart, lane, rival)) return false;
       const predicted = rival.gap + (rival.speed - kart.speed) * .4;
       return Math.min(rival.gap, predicted) < 5 && Math.max(rival.gap, predicted) > -5
         && rival.lane >= lo && rival.lane <= hi;
     });
+  }
+
+  private canCreepPast(kart: Kart, lane: number, rival: Rival) {
+    const offset = lane - rival.lane;
+    return rival.speed < 2 && kart.speed < 5.5 && Math.abs(offset) >= 2.2
+      && (kart.lane - rival.lane) * offset >= 0;
   }
 
   private position(kart: Kart, time: number, target: number, pace: number, rivals: Rival[]) {
@@ -90,9 +97,9 @@ export class BotPilot {
     if (behind?.id !== this.defended) this.defended = undefined;
     if (!this.maneuver && time >= this.decideAt) {
       this.decideAt = time + this.skill.reaction;
-      if (front && front.gap > 5.5 && front.gap < 22 && front.speed < Math.max(kart.speed, pace) - .9) {
+      if (front && front.gap < 22 && front.speed < Math.max(kart.speed, pace) - .9) {
         const candidates = [front.lane - 2.9, front.lane + 2.9]
-          .filter(lane => Math.abs(lane) <= safeLane && this.canShift(kart, lane, rivals));
+          .filter(lane => Math.abs(lane) <= safeLane && this.canShift(kart, lane, rivals, front));
         candidates.sort((a, b) => Math.abs(a - kart.lane) + .35 * Math.abs(a - target) - Math.abs(b - kart.lane) - .35 * Math.abs(b - target));
         if (candidates.length) this.maneuver = { kind: 'pass', rival: front.id, lane: candidates[0], until: time + 2.6 };
       } else if (this.difficulty !== 'Easy' && behind && behind.gap < -10 && behind.gap > -21
@@ -105,10 +112,16 @@ export class BotPilot {
         }
       }
     }
-    if (this.maneuver) target = this.canShift(kart, this.maneuver.lane, rivals) ? this.maneuver.lane : kart.lane;
-    else if (!this.canShift(kart, target, rivals)) target = kart.lane;
-    if (front && front.gap < 7) pace = Math.min(pace, front.speed + Math.max(0, front.gap - 3));
-    return { target, pace, following: !!front && front.gap < 4.2 && kart.speed > front.speed + 2.5 };
+    const pass = this.maneuver?.kind === 'pass' ? rivals.find(rival => rival.id === this.maneuver?.rival) : undefined;
+    let creeping = false;
+    if (this.maneuver && this.canShift(kart, this.maneuver.lane, rivals, pass)) {
+      target = this.maneuver.lane;
+      creeping = !!pass && Math.abs(pass.gap) < 5 && Math.abs(kart.lane - pass.lane) < 2.2
+        && this.canCreepPast(kart, target, pass);
+    } else if (this.maneuver || !this.canShift(kart, target, rivals)) target = kart.lane;
+    if (creeping) pace = Math.min(pace, 4.5);
+    else if (front && front.gap < 7) pace = Math.min(pace, front.speed + Math.max(0, front.gap - 3));
+    return { target, pace, following: !creeping && !!front && front.gap < 4.2 && kart.speed > front.speed + 2.5 };
   }
 
   input(kart: Kart, elapsed: number, racers: Driver[]): Input {

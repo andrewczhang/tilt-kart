@@ -113,6 +113,36 @@ test('a bot picks a clear side, then passes a slower kart without contact', () =
   assert.ok(kart.s > opponent.pose[0]);
 });
 
+for (const crowded of [false, true]) {
+  test(`a bot creeps around a stopped kart ${crowded ? 'after adjacent traffic clears' : 'with room to pass'}`, () => {
+    const track = RED_BASIN;
+    const kart = { ...grid(0, track), s: .31, lane: 0, speed: 0 };
+    const stopped = driver('stopped', 'Stopped', 1, track);
+    stopped.pose = [kart.s + 2.5 / track.length, 0, 0, 0, 0, 0];
+    const rivals = [stopped];
+    if (crowded) {
+      for (const [i, lane] of [-2.9, 2.9].entries()) {
+        const adjacent = driver(`adjacent-${i}`, 'Adjacent', i + 2, track);
+        adjacent.pose = [kart.s, lane, 0, 0, 0, 0];
+        rivals.push(adjacent);
+      }
+    }
+    const pilot = new BotPilot(track, 0, 'Hard');
+    const passed = stopped.pose[0] + 5 / track.length;
+    for (let elapsed = dt * 1000; elapsed <= (crowded ? 8000 : 5000) && kart.s < passed; elapsed += dt * 1000) {
+      if (crowded && elapsed > 500) {
+        for (const adjacent of rivals.slice(1)) {
+          adjacent.pose[3] = 12;
+          adjacent.pose[0] += adjacent.pose[3] * dt / track.length;
+        }
+      }
+      drive(kart, pilot.input(kart, elapsed, rivals), dt, track);
+      if (elapsed <= 500 && crowded) assert.ok(Math.abs(kart.lane) < .2);
+    }
+    assert.ok(kart.s >= passed, `only advanced ${((kart.s - stopped.pose[0]) * track.length).toFixed(1)} m beyond the stopped kart`);
+  });
+}
+
 test('Hard defends earlier against a closing rival but does not cut off a kart alongside', () => {
   const track = RED_BASIN;
   const kart = { ...grid(0, track), s: .015, lane: 0, speed: 33 };
