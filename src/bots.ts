@@ -59,7 +59,7 @@ export class BotPilot {
     this.skill = tuning[difficulty];
     this.line = racingLine(track);
     this.phase = slot * 2.4;
-    this.safeLane = track.width / 2 - 1.65;
+    this.safeLane = track.width / 2 - 2.6;
   }
 
   private traffic(kart: Kart, racers: Driver[]) {
@@ -150,7 +150,8 @@ export class BotPilot {
     const rivals = this.traffic(kart, racers);
     const { target, pace, following, maxProgress } = this.position(kart, time, clamp(lineTarget, -safeLane, safeLane), desiredPace, rivals);
     const herePoint = track.point(kart.s, kart.lane);
-    const aim = track.point(kart.s + (5 + kart.speed * .22) / track.length, target);
+    const lookahead = this.maneuver ? 4 + kart.speed * .08 : 5 + kart.speed * .22;
+    const aim = track.point(kart.s + lookahead / track.length, clamp(target, -safeLane, safeLane));
     const bearing = Math.atan2(aim.x - herePoint.x, aim.z - herePoint.z);
     const error = delta(bearing - track.frame(kart.s).heading - kart.yaw, 2 * Math.PI);
     let steer = clamp(error * 3, -1, 1);
