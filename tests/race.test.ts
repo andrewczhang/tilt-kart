@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { LAPS, LENGTH, LIMIT, SECTORS, WIDTH, delta, frame, point } from '../src/circuit';
-import { BOOST_SPEED, PADS, PAD_LENGTH, PAD_WIDTH, TOP_SPEED, bump, drive, grid, pose } from '../src/drive';
+import { BOOST_SPEED, PADS, PAD_LENGTH, PAD_WIDTH, TOP_SPEED, bump, drive, grid, pose, remoteContact } from '../src/drive';
 import { advance, driver, rank, validPose } from '../src/rules';
 import { centerSteer } from './steering';
 
@@ -120,11 +120,19 @@ test('an online kart bumps away from a remote snapshot without changing it', () 
   const local = Object.assign(grid(0), { s: 0, lane: -.85, yaw: .3, speed: 38 });
   const remote = pose(Object.assign(grid(1), { s: 0, lane: .85, speed: 38 }));
   const before = [...remote];
-  bump(local, remote);
+  bump(local, remoteContact({ pose: remote, receivedAt: 0 }, 0));
   assert.deepEqual(remote, before);
   assert.ok(local.lane < -1.5);
   assert.ok(local.slipAngle < -.3);
   assert.ok(local.speed > 34);
+});
+
+test('an online kart does not collide with the render trail of a peer ahead', () => {
+  const rear = Object.assign(grid(0), { s: 0, lane: 0, speed: 40 });
+  const leader = Object.assign(grid(1), { s: 2.3 / LENGTH, lane: 0, speed: 40 });
+  bump(rear, remoteContact({ pose: pose(leader), receivedAt: 1000 }, 1040));
+  assert.equal(rear.s, 0);
+  assert.equal(rear.speed, 40);
 });
 
 test('room judges from the ordered checkpoints and rejects implausible poses', () => {

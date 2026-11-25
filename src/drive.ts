@@ -4,6 +4,8 @@ import type { BoostPad } from './tracks';
 export type Kart = { s: number; lane: number; yaw: number; slipAngle: number; recovery: number; speed: number; drift: number; boost: number; steer: number; brakeHeld: boolean; spin: number; star: number; turbo: number };
 export type Input = { steer: number; brake: boolean; gas: boolean; maxProgress?: number };
 export type Pose = [s: number, lane: number, yaw: number, speed: number, drift: number, boost: number];
+export type RemoteSample = { pose: Pose; receivedAt: number };
+type RemoteContact = { x: number; y: number; z: number; vx: number; vz: number };
 export const PADS = RED_BASIN.pads;
 export const PAD_WIDTH = 3.3;
 export const PAD_LENGTH = 4.4;
@@ -71,21 +73,28 @@ function nudge(k: Kart, x: number, z: number, heading: number, vx: number, vz: n
   }
 }
 
-export function bump(a: Kart, b: Kart | Pose, track = RED_BASIN) {
-  const remote = Array.isArray(b);
-  const aFrame = track.frame(a.s), bFrame = track.frame(remote ? b[0] : b.s);
-  const p = track.point(a.s, a.lane), q = remote ? track.point(b[0], b[1]) : track.point(b.s, b.lane);
+export function remoteContact({ pose: [s, lane, yaw, speed], receivedAt }: RemoteSample, now: number, track = RED_BASIN): RemoteContact {
+  const p = track.point(s, lane), heading = track.frame(s).heading + yaw;
+  const vx = Math.sin(heading) * speed, vz = Math.cos(heading) * speed;
+  const age = clamp((now - receivedAt) / 1000, 0, .1);
+  return { x: p.x + vx * age, y: p.y, z: p.z + vz * age, vx, vz };
+}
+
+export function bump(a: Kart, b: Kart | RemoteContact, track = RED_BASIN) {
+  const remote = 'vx' in b;
+  const aFrame = track.frame(a.s);
+  const p = track.point(a.s, a.lane), q = remote ? b : track.point(b.s, b.lane);
   if (Math.abs(p.y - q.y) > 2.5) return;
   const dx = p.x - q.x, dz = p.z - q.z;
   const distance = Math.hypot(dx, dz);
   if (distance >= KART_DIAMETER) return;
   const nx = distance > 1e-6 ? dx / distance : Math.cos(aFrame.heading);
   const nz = distance > 1e-6 ? dz / distance : -Math.sin(aFrame.heading);
-  const aHeading = aFrame.heading + a.yaw, bHeading = bFrame.heading + (remote ? b[2] : b.yaw);
+  const aHeading = aFrame.heading + a.yaw, bHeading = remote ? 0 : track.frame(b.s).heading + b.yaw;
   const av = aHeading + a.slipAngle, bv = bHeading + (remote ? 0 : b.slipAngle);
-  const bSpeed = remote ? b[3] : b.speed;
   const ax = Math.sin(av) * a.speed, az = Math.cos(av) * a.speed;
-  const bx = Math.sin(bv) * bSpeed, bz = Math.cos(bv) * bSpeed;
+  const bx = remote ? b.vx : Math.sin(bv) * b.speed;
+  const bz = remote ? b.vz : Math.cos(bv) * b.speed;
   const fraction = remote ? 1 : .5;
   const correction = (KART_DIAMETER - distance) * fraction;
   const impulse = Math.max(0, ((bx - ax) * nx + (bz - az) * nz) * 1.32 * fraction);

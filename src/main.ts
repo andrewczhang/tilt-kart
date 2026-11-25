@@ -5,7 +5,7 @@ import { COLORS, COUNTDOWN, LAPS, LIMIT, clamp, delta, getTrack } from './circui
 import { Controls } from './controls';
 import { cupItinerary, cupSelector, fillCupResults } from './cup-ui';
 import { CUPS, CUP_IDS, cupTrack, isCupId, newCup, nextRound, type Cup } from './cups';
-import { bump, drive, grid, pose, substep, type Kart, type Pose } from './drive';
+import { bump, drive, grid, pose, remoteContact, substep, type Kart, type Pose, type RemoteSample } from './drive';
 import { newDriverId } from './driver-id';
 import { decodeGhost, ghostPose, ghostTimeAt, type Ghost, type Replay, type Standing } from './ghost';
 import { RaceMusic } from './music';
@@ -44,6 +44,7 @@ let view: View;
 let practiceTrack: TrackId = DEFAULT_TRACK;
 let track = getTrack();
 const remotes = new Map<string, Pose>();
+const remoteSamples = new Map<string, RemoteSample>();
 const powerups = new PowerupState();
 let lastItemKey = '';
 const show = (html: string) => { ui.innerHTML = html; };
@@ -335,6 +336,7 @@ function close() {
   localRace = undefined;
   trial = undefined;
   remotes.clear();
+  remoteSamples.clear();
   joining = false;
   issue = '';
 }
@@ -387,6 +389,7 @@ async function connect(name: string) {
       else if (message.type === 'state') {
         const d = room?.drivers.find(p => p.id === message.id);
         if (d) {
+          if (d.id !== player) remoteSamples.set(d.id, { pose: message.pose, receivedAt: performance.now() });
           Object.assign(d, { pose: message.pose, checkpoint: message.checkpoint, finish: message.finish });
           if (screen === 'results' && message.finish !== null) updateResults();
         }
@@ -409,6 +412,13 @@ function connectionLost(reason: string) {
 
 function receiveRoom(next: RoomState) {
   const newRace = room?.start !== next.start;
+  for (const d of next.drivers) {
+    if (d.id === player) continue;
+    if (!d.online) remoteSamples.delete(d.id);
+    else if (d.pose.some((n, i) => n !== remoteSamples.get(d.id)?.pose[i])) {
+      remoteSamples.set(d.id, { pose: d.pose, receivedAt: performance.now() });
+    }
+  }
   room = next;
   const me = next.drivers.find(d => d.id === player);
   if (next.start === null) {
@@ -479,6 +489,7 @@ function resetRace(me?: Driver) {
   starting = true;
   followed = '';
   remotes.clear();
+  remoteSamples.clear();
   powerups.reset();
   lastItemKey = '';
 }
@@ -773,14 +784,18 @@ function tick(now: number) {
     } else {
       const peers = room.drivers.filter(d => d.id !== player && d.online);
       const raceDt = canDrive ? frameRaceDt : 0;
-      for (const peer of peers) blendRemote(peer, dt - raceDt);
+      for (const peer of peers) blendRemote(peer, dt);
       if (raceDt > 0) {
         const input = touch.input();
+        let stepAt = now - raceDt * 1000;
         substep(raceDt, step => {
+          stepAt += step * 1000;
           drive(local, input, step, track);
           for (const peer of peers) {
-            blendRemote(peer, step);
-            if (peer.finish === null && local.star <= 0 && powerups.fxOf(peer.id).star <= 0) bump(local, remotes.get(peer.id)!, track);
+            if (peer.finish === null && local.star <= 0 && powerups.fxOf(peer.id).star <= 0) {
+              const sample = remoteSamples.get(peer.id) ?? { pose: peer.pose, receivedAt: now };
+              bump(local, remoteContact(sample, stepAt, track), track);
+            }
           }
         });
       }
