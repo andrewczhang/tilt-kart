@@ -431,19 +431,21 @@ function results() {
   screen = 'results';
   wake.setActive(false);
   const splits = timing.splits(finish !== null), records = timing.records(finish);
+  const time = finish === null ? 'DNF' : formatTime(finish);
+  const splitsAndRecords = `
+    <dl class="splits" aria-label="Lap splits">${Array.from({ length: LAPS }, (_, i) =>
+      `<div><dt>Lap ${i + 1}</dt><dd>${formatTime(splits[i] ?? Infinity)}</dd></div>`).join('')}</dl>
+    <dl class="records" aria-label="Personal bests"><div><dt>Best lap</dt><dd>${formatTime(records.lap)}</dd></div>
+      <div><dt>Best time</dt><dd>${formatTime(records.race)}</dd></div></dl>`;
   if (room?.cup && room.complete) {
-    cupResults(room.cup);
+    cupResults(room.cup, me ? `<details><summary>${track.name} · Your result: ${time}</summary>${splitsAndRecords}</details>` : '');
     return;
   }
   const racers = localRace?.racers;
   const retry = room?.cup ? '' : racers ? 'Race again' : room?.host === player ? 'Rematch' : '';
   show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet"><p class="identity">Tilt Kart / ${track.name}</p>
     <h2 class="title" id="result-title">${racers === 1 ? 'Practice results' : 'Race results'}</h2>
-    ${me ? `<p class="finish-time"><small>Your result</small><strong>${finish === null ? 'DNF' : formatTime(finish)}</strong></p>
-    <dl class="splits" aria-label="Lap splits">${Array.from({ length: LAPS }, (_, i) =>
-      `<div><dt>Lap ${i + 1}</dt><dd>${formatTime(splits[i] ?? Infinity)}</dd></div>`).join('')}</dl>
-    <dl class="records" aria-label="Personal bests"><div><dt>Best lap</dt><dd>${formatTime(records.lap)}</dd></div>
-      <div><dt>Best time</dt><dd>${formatTime(records.race)}</dd></div></dl>` : ''}
+    ${me ? `<p class="finish-time"><small>Your result</small><strong>${time}</strong></p>${splitsAndRecords}` : ''}
     <ol class="list" id="results-list"></ol><p id="result-status"></p>
     <div class="actions">${button('back', 'Main menu', true)}${retry ? button('retry', retry) : ''}</div>
     </div></section>`);
@@ -452,7 +454,7 @@ function results() {
   if (retry) doOn('retry', () => racers ? prepareLocal(racers, results) : socket?.send('rematch'));
 }
 
-function cupResults(cup: Cup) {
+function cupResults(cup: Cup, timingDetails: string) {
   const event = CUPS[cup.id];
   const next = nextRound(cup);
   const racers = localRace?.racers;
@@ -465,6 +467,7 @@ function cupResults(cup: Cup) {
     <table class="cup-table" id="cup-table" aria-label="${event.name} points"><thead><tr><th scope="col">Driver</th>
     ${cup.results.map((_, i) => `<th scope="col" title="${getTrack(event.tracks[i]).name}">R${i + 1}</th>`).join('')}
     <th scope="col">Total</th></tr></thead><tbody></tbody></table>
+    ${timingDetails}
     ${canContinue ? '' : `<p class="cup-wait" role="status">Waiting for the host to ${next ? 'start the next race' : 'return to the lobby'}.</p>`}
     <div class="actions">${canContinue ? button('cup-next', continueLabel) : ''}${button('back', 'Main menu', true)}</div>
     </div></section>`);
