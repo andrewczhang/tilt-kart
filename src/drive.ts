@@ -142,7 +142,10 @@ function integrate(k: Kart, input: Input, dt: number, track: Circuit, items: boo
     k.recovery = 0;
     k.brakeHeld = input.brake;
     k.speed = Math.max(6, k.speed - 24 * dt);
-    k.s += k.speed * dt / track.length;
+    const next = k.s + k.speed * dt / track.length * track.progressScale(k.s, k.lane);
+    const [left, right] = track.laneBounds(next, k.lane, k.s, k.lane);
+    k.lane = clamp(k.lane, left + .85, right - .85);
+    k.s = next;
     k.yaw += (0 - k.yaw) * Math.min(1, dt * 8);
     return;
   }

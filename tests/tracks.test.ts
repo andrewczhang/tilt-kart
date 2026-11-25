@@ -102,6 +102,21 @@ test('ramps lift karts over open gaps and grip varies on ice and lava edges', ()
   assert.ok(getTrack('arena').widthAt(.62) > getTrack('arena').width + 5);
 });
 
+test('power-up speeds and spin-outs stay valid on a split road', () => {
+  const track = getTrack('saltwater');
+  const k = grid(0, track);
+  const s = .603, lane = track.branchAt(s)!.center;
+  const d = driver('branch', 'Driver', 0, track);
+  d.pose = [s - .001, lane, 0, 62, 0, 1.95];
+  assert.ok(validPose(d.pose, track));
+  assert.ok(advance(d, [s, lane, 0, 62, 0, 1.95], 14_000, .06, track));
+  Object.assign(k, { s: .665, lane: -24, speed: 42, spin: 1.2 });
+  for (let i = 0; i < 72; i++) {
+    drive(k, {steer: 0, gas: true, brake: false}, 1 / 60, track);
+    assert.ok(validPose(pose(k), track));
+  }
+});
+
 test('a local race uses its selected track for every entrant', () => {
   const track = getTrack('cedar');
   const race = new LocalRace(8, 0, track);
