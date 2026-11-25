@@ -7,6 +7,7 @@ Race eight three-lap 3D circuits, from Red Basin to the figure-eight overpass at
 1. Pick a track for **Solo practice** or **Vs bots** (2–8 racers, including you). To play with friends, create a room and choose a driver name. The host picks the track in the lobby. Use **Invite friends** to send the room link, then **Start race** when everybody is on the grid.
 2. On a phone, turn it sideways and hold it like a wheel. Allow motion access when asked. The kart accelerates automatically; hold **Brake / Drift** while steering, then release for a boost. Use **Recenter tilt** to set a new neutral angle. Touch steering is available if the browser doesn't supply motion data.
 3. On desktop, use **WASD** or the arrow keys. **Space** also brakes. Hit the colored strips to boost, and keep clear of the curbs and barriers.
+4. Use **Mute music** in the race HUD to silence the soundtrack without muting the kart's sound effects. Each circuit has an original house loop made with [Beat Lab](https://andrewcz.pages.dev/beats).
 
 ## Develop
 

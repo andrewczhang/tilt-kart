@@ -4,6 +4,7 @@ import { LocalRace, MAX_RACERS } from './bots';
 import { COLORS, COUNTDOWN, LAPS, LIMIT, clamp, getTrack } from './circuit';
 import { Controls } from './controls';
 import { drive, grid, pose, type Kart, type Pose } from './drive';
+import { RaceMusic } from './music';
 import { readPreference, writePreference } from './preferences';
 import { driver, rank, type Driver, type RoomState, type ServerMessage } from './rules';
 import { View } from './scene';
@@ -14,6 +15,7 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const ui = $('interface');
 const touch = new Controls(updateTilt, () => screen === 'race');
 const motor = new Motor();
+const music = new RaceMusic(() => motor.start(), motor.muted);
 const route = /^\/r\/([0-9a-z]{8})\/?$/i.exec(location.pathname);
 let code = route?.[1].toUpperCase() ?? '';
 let screen: 'home' | 'bots' | 'join' | 'lobby' | 'race' | 'spectate' | 'results' = code ? 'join' : 'home';
@@ -158,6 +160,7 @@ function fillList(list: HTMLElement, drivers: Driver[], status: (d: Driver) => s
 }
 
 function close() {
+  music.stop();
   clearInterval(heartbeat);
   const prev = socket;
   socket = undefined;
@@ -239,6 +242,7 @@ function receiveRoom(next: RoomState) {
   room = next;
   const me = next.drivers.find(d => d.id === player);
   if (next.start === null) {
+    music.stop();
     screen = 'lobby';
     menu();
   } else if (next.complete || me?.finish != null) {
@@ -291,13 +295,14 @@ function spectate() {
 function begin() {
   screen = 'race';
   resetRace(room!.drivers.find(d => d.id === player));
+  music.start(track.id);
   show(`<div class="hud" aria-label="Race overview">
       <div class="hud-box"><small>Lap</small><em id="lap">1/3</em></div>
       <div class="hud-box"><small>Place</small><em id="place">1/${room!.drivers.length}</em></div>
       <div class="hud-box"><small>km/h</small><em id="speed">0</em></div>
       <canvas id="map" class="map" width="160" height="130" aria-label="${track.name} circuit map"></canvas>
     </div>
-    <div class="hud-actions"><button class="tool" id="tilt"${touch.touch ? '' : ' hidden'}>Enable tilt</button><button class="tool" id="sound"></button><button class="tool" id="exit">Exit</button></div>
+    <div class="hud-actions"><button class="tool" id="tilt"${touch.touch ? '' : ' hidden'}>Enable tilt</button><button class="tool" id="sound"></button><button class="tool" id="music"></button><button class="tool" id="exit">Exit</button></div>
     <div class="status" id="status" role="status"></div><div class="rotate">Turn sideways for a wider view</div>
     <div class="boost" aria-label="Drift boost"><i id="boost"></i></div>
     <div class="touch"${touch.touch ? '' : ' hidden'}><button id="left">Left</button><button id="right">Right</button><button id="brake">Brake / Drift</button></div>`);
@@ -314,9 +319,13 @@ function begin() {
       else updateTilt();
     });
   });
-  const labelSound = () => { $('sound').textContent = motor.muted ? 'Sound off' : 'Sound on'; };
-  hudAction('sound', () => { motor.toggle(); labelSound(); });
-  labelSound();
+  const labelAudio = () => {
+    $('sound').textContent = motor.muted ? 'Unmute FX' : 'Mute FX';
+    $('music').textContent = music.muted ? 'Unmute music' : 'Mute music';
+  };
+  hudAction('sound', () => { motor.toggle(); labelAudio(); });
+  hudAction('music', () => { music.toggle(); labelAudio(); });
+  labelAudio();
   hudAction('exit', home);
 }
 
@@ -326,6 +335,7 @@ function formatTime(ms: number) {
 }
 
 function results() {
+  music.stop();
   screen = 'results';
   const racers = localRace?.racers;
   const rematch = !localRace && room?.host === player;

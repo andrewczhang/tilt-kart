@@ -37,6 +37,7 @@ export class Motor {
       } catch { return; }
     }
     void this.ctx.resume().catch(() => {});
+    return this.ctx;
   }
 
   toggle() {
