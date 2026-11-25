@@ -10,6 +10,8 @@ export class Controls {
   private neutral: number | undefined;
   private orientation = 0;
   private tiltListener = false;
+  private tiltTimer = 0;
+  tiltStatus: 'idle' | 'waiting' | 'denied' | 'unavailable' | 'ready' = 'idle';
   touch = matchMedia('(pointer: coarse)').matches;
 
   constructor(private change: () => void, racing: () => boolean) {
@@ -29,24 +31,38 @@ export class Controls {
   get tilted() { return this.roll !== undefined; }
 
   async enableTilt() {
-    if (this.tiltListener) { this.calibrate(); return true; }
+    if (this.tilted) { this.calibrate(); return; }
+    if (this.tiltStatus === 'waiting') return;
     const sensor = window.DeviceOrientationEvent as Orientation | undefined;
-    if (!sensor) return false;
+    if (!sensor) { this.setTiltStatus('unavailable'); return; }
+    this.setTiltStatus('waiting');
     try {
-      if (sensor.requestPermission && await sensor.requestPermission() !== 'granted') return false;
-    } catch { return false; }
-    addEventListener('deviceorientation', e => {
-      if (e.beta === null || e.gamma === null) return;
-      const angle = screen.orientation?.angle || (window as Window & { orientation?: number }).orientation || 0;
-      const roll = angle === 90 ? e.beta : Math.abs(angle) === 90 || angle === 270 ? -e.beta : angle === 180 ? -e.gamma : e.gamma;
-      if (this.orientation !== angle) { this.neutral = undefined; this.orientation = angle; }
-      const first = this.roll === undefined;
-      this.roll = roll;
-      this.neutral ??= roll;
-      if (first) this.change();
-    });
-    this.tiltListener = true;
-    return true;
+      if (!this.tiltListener && sensor.requestPermission && await sensor.requestPermission() !== 'granted') {
+        this.setTiltStatus('denied');
+        return;
+      }
+    } catch { this.setTiltStatus('denied'); return; }
+    if (!this.tiltListener) {
+      addEventListener('deviceorientation', e => {
+        if (e.beta === null || e.gamma === null) return;
+        const angle = screen.orientation?.angle || (window as Window & { orientation?: number }).orientation || 0;
+        const roll = angle === 90 ? e.beta : Math.abs(angle) === 90 || angle === 270 ? -e.beta : angle === 180 ? -e.gamma : e.gamma;
+        if (this.orientation !== angle) { this.neutral = undefined; this.orientation = angle; }
+        this.roll = roll;
+        this.neutral ??= roll;
+        if (this.tiltStatus !== 'ready') {
+          window.clearTimeout(this.tiltTimer);
+          this.setTiltStatus('ready');
+        }
+      });
+      this.tiltListener = true;
+    }
+    this.tiltTimer = window.setTimeout(() => this.setTiltStatus('unavailable'), 1500);
+  }
+
+  private setTiltStatus(status: Controls['tiltStatus']) {
+    this.tiltStatus = status;
+    this.change();
   }
 
   bindTouch() {

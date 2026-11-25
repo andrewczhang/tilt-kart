@@ -46,6 +46,23 @@ export class Motor {
     if (!this.muted) this.start();
   }
 
+  finish() {
+    const ctx = this.ctx;
+    if (!ctx || this.muted || ctx.state !== 'running') return;
+    for (const [i, pitch] of [523.25, 659.25, 783.99, 1046.5].entries()) {
+      const at = ctx.currentTime + i * .11;
+      const note = ctx.createOscillator(), gain = ctx.createGain();
+      note.type = 'triangle';
+      note.frequency.value = pitch;
+      gain.gain.setValueAtTime(.0001, at);
+      gain.gain.exponentialRampToValueAtTime(.13, at + .02);
+      gain.gain.exponentialRampToValueAtTime(.0001, at + .28);
+      note.connect(gain).connect(ctx.destination);
+      note.start(at);
+      note.stop(at + .28);
+    }
+  }
+
   update(kart?: Kart) {
     if (!this.ctx || !this.master || !this.motor || !this.skid) return;
     const now = this.ctx.currentTime;

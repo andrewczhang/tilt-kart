@@ -3,16 +3,28 @@ import { test } from 'node:test';
 import { Motor } from '../src/audio';
 import { Controls } from '../src/controls';
 import { readPreference, writePreference } from '../src/preferences';
+import { RaceTiming } from '../src/timing';
+import { RaceWakeLock } from '../src/wake';
 
-function withGlobals(globals: PropertyDescriptorMap, run: () => void) {
+function setGlobals(globals: PropertyDescriptorMap) {
   const prior = Object.getOwnPropertyDescriptors(globalThis);
   Object.defineProperties(globalThis, globals);
-  try { run(); } finally {
+  return () => {
     for (const key of Object.keys(globals)) {
       if (prior[key]) Object.defineProperty(globalThis, key, prior[key]);
       else Reflect.deleteProperty(globalThis, key);
     }
-  }
+  };
+}
+
+function withGlobals(globals: PropertyDescriptorMap, run: () => void) {
+  const restore = setGlobals(globals);
+  try { run(); } finally { restore(); }
+}
+
+async function withAsyncGlobals(globals: PropertyDescriptorMap, run: () => void | Promise<void>) {
+  const restore = setGlobals(globals);
+  try { await run(); } finally { restore(); }
 }
 
 test('blocked local storage does not prevent loading or changing preferences', () => {
@@ -56,5 +68,121 @@ test('space activates menu buttons but brakes during a race regardless of focus'
     assert.equal(controls.input().brake, true);
     space('keyup', {});
     assert.equal(controls.input().brake, false);
+  });
+});
+
+test('tilt waits for sensor data, reports denial or absence, and recovers on late data', async () => {
+  const events = new EventTarget();
+  let timeout = () => {};
+  const window = {
+    DeviceOrientationEvent: { requestPermission: async () => 'denied' },
+    setTimeout: (fn: () => void) => { timeout = fn; return 1; },
+    clearTimeout: () => { timeout = () => {}; },
+  };
+  await withAsyncGlobals({
+    window: { configurable: true, value: window },
+    screen: { configurable: true, value: { orientation: { angle: 90 } } },
+    addEventListener: { configurable: true, value: events.addEventListener.bind(events) },
+    matchMedia: { configurable: true, value: () => ({ matches: true }) },
+  }, async () => {
+    const controls = new Controls(() => {}, () => false);
+    await controls.enableTilt();
+    assert.equal(controls.tiltStatus, 'denied');
+    window.DeviceOrientationEvent.requestPermission = async () => 'granted';
+    await controls.enableTilt();
+    assert.equal(controls.tiltStatus, 'waiting');
+    timeout();
+    assert.equal(controls.tiltStatus, 'unavailable');
+    const orientation = (beta: number | null) => events.dispatchEvent(Object.assign(new Event('deviceorientation'), { beta, gamma: 0 }));
+    orientation(null);
+    assert.equal(controls.tiltStatus, 'unavailable');
+    orientation(8);
+    assert.equal(controls.tiltStatus, 'ready');
+    assert.equal(controls.input().steer, -0);
+    orientation(35);
+    assert.ok(controls.input().steer < 0);
+  });
+});
+
+test('race wake lock is acquired, restored on visibility, and released on exit', async () => {
+  const document = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+  class Lock extends EventTarget {
+    released = false;
+    async release() { this.released = true; this.dispatchEvent(new Event('release')); }
+  }
+  const locks: Lock[] = [];
+  await withAsyncGlobals({
+    document: { configurable: true, value: document },
+    navigator: { configurable: true, value: { wakeLock: { request: async () => {
+      const lock = new Lock(); locks.push(lock); return lock;
+    } } } },
+  }, async () => {
+    const wake = new RaceWakeLock();
+    wake.setActive(true);
+    await Promise.resolve();
+    assert.equal(locks.length, 1);
+    document.visibilityState = 'hidden';
+    await locks[0].release();
+    document.dispatchEvent(new Event('visibilitychange'));
+    assert.equal(locks.length, 1);
+    document.visibilityState = 'visible';
+    document.dispatchEvent(new Event('visibilitychange'));
+    await Promise.resolve();
+    assert.equal(locks.length, 2);
+    wake.setActive(false);
+    assert.equal(locks[1].released, true);
+  });
+});
+
+test('all lap splits use client crossings even when the official finish is later', () => {
+  const values = new Map<string, string>();
+  withGlobals({
+    localStorage: { configurable: true, value: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    } },
+  }, () => {
+    const timing = new RaceTiming();
+    timing.step(.9, 1.1, 10_010, 20);
+    timing.step(1.9, 2.1, 19_010, 20);
+    timing.step(2.9, 3.1, 30_010, 20);
+    assert.deepEqual(timing.splits(true), [10_000, 9_000, 11_000]);
+    assert.deepEqual(timing.splits(false), [10_000, 9_000]);
+    assert.deepEqual(timing.records(30_800), { lap: 9_000, race: 30_800 });
+    const retry = new RaceTiming();
+    assert.deepEqual(retry.records(null), { lap: 9_000, race: 30_800 });
+  });
+});
+
+test('rejoining mid-race does not invent lap splits before the first observed crossing', () => {
+  const timing = new RaceTiming();
+  timing.step(1.9, 2.1, 19_010, 20);
+  timing.step(2.9, 3.1, 30_010, 20);
+  assert.deepEqual(timing.splits(true), [undefined, undefined, 11_000]);
+});
+
+test('a clamped local finish uses the crossing time instead of the end of the frame', () => {
+  const timing = new RaceTiming();
+  timing.step(1.9, 2.1, 19_010, 20);
+  timing.step(2.9, 3, 30_020, 40, 30_005);
+  assert.deepEqual(timing.splits(true), [undefined, undefined, 11_005]);
+});
+
+test('personal bests are separate for each circuit', () => {
+  const values = new Map<string, string>();
+  withGlobals({
+    localStorage: { configurable: true, value: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    } },
+  }, () => {
+    const basin = new RaceTiming();
+    basin.step(.9, 1.1, 10_010, 20);
+    assert.deepEqual(basin.records(30_000), { lap: 10_000, race: 30_000 });
+    const arena = new RaceTiming('arena');
+    assert.deepEqual(arena.records(null), { lap: Infinity, race: Infinity });
+    arena.step(.9, 1.1, 20_010, 20);
+    assert.deepEqual(arena.records(50_000), { lap: 20_000, race: 50_000 });
+    assert.deepEqual(new RaceTiming().records(null), { lap: 10_000, race: 30_000 });
   });
 });
