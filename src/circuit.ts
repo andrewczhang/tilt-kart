@@ -11,7 +11,10 @@ export const wrap = (n: number, period = 1) => ((n % period) + period) % period;
 export const delta = (n: number, period = 1) => wrap(n + period / 2, period) - period / 2;
 export const mix = (a: number, b: number, t: number) => a + (b - a) * t;
 export const SAMPLES = 720;
-export const inSection = (s: number, section: Section) => wrap(s) >= section.start && wrap(s) < section.end;
+export const inSection = (s: number, section: Section) => {
+  const station = s - Math.floor(s) + 1e-10;
+  return station >= section.start && station < section.end;
+};
 const envelope = (s: number, section: Section) => Math.sin(Math.PI * (wrap(s) - section.start) / (section.end - section.start)) ** 2;
 
 type Frame = { x: number; y: number; z: number; heading: number; bank: number };
@@ -27,6 +30,8 @@ export type Circuit = TrackSpec & {
   airHeight(s: number, speed: number): number;
   gapAt(s: number): boolean;
   gradeAt(s: number): number;
+  progressScale(s: number, lane: number): number;
+  rumbleAt(s: number): number;
 };
 
 const circuits = new Map<TrackId, Circuit>();
@@ -62,7 +67,7 @@ export function getTrack(id: TrackId = DEFAULT_TRACK): Circuit {
   }
   function surfaceAt(s: number, lane: number) {
     const zone = surfaces.find(p => inSection(s, p) && (!p.edge || Math.abs(lane) > widthAt(s) * .31));
-    return zone?.grip ?? 1;
+    return (zone?.grip ?? 1) * (rumbleAt(s) ? .83 : 1);
   }
   const gapAt = (s: number) => jumps.some(j => inSection(s, j));
   function rampHeight(s: number) {
@@ -104,13 +109,27 @@ export function getTrack(id: TrackId = DEFAULT_TRACK): Circuit {
   }
   function point(s: number, lane = 0, height = 0) {
     const f = frame(s);
-    return new Vector3(f.x + Math.cos(f.heading) * lane, f.y + lane * f.bank + height, f.z - Math.sin(f.heading) * lane);
+    const bowl = profiles.find(p => p.bank !== undefined && inSection(s, p));
+    const lip = bowl ? Math.max(0, Math.abs(lane) - spec.width * .30) ** 2 * .024 * envelope(s, bowl) : 0;
+    return new Vector3(f.x + Math.cos(f.heading) * lane, f.y + lane * f.bank + height + lip, f.z - Math.sin(f.heading) * lane);
   }
   function gradeAt(s: number) {
     const d = 2 / length;
     return clamp((frame(s + d).y - frame(s - d).y) / 4, -.6, .6);
   }
-  const track = { ...spec, id, length, frame, point, widthAt, branchAt, laneBounds, surfaceAt, airHeight, gapAt, gradeAt };
+  function progressScale(s: number, lane: number) {
+    const branch = branchAt(s);
+    if (!branch || lane * branch.side <= widthAt(s) / 2) return 1;
+    const step = 2 / length;
+    const offset = lane - branch.center;
+    const a = point(s - step, (branchAt(s - step)?.center ?? branch.center) + offset);
+    const b = point(s + step, (branchAt(s + step)?.center ?? branch.center) + offset);
+    return clamp(4 / a.distanceTo(b), .75, 1.38);
+  }
+  function rumbleAt(s: number) {
+    return spec.feature.kind === 'truss' && inSection(s, spec.feature) ? Math.sin(s * length * 2.8) : 0;
+  }
+  const track = { ...spec, id, length, frame, point, widthAt, branchAt, laneBounds, surfaceAt, airHeight, gapAt, gradeAt, progressScale, rumbleAt };
   circuits.set(id, track);
   return track;
 }

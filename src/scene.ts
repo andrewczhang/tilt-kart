@@ -316,8 +316,9 @@ export class View {
       const [s, lane, yaw, speed, , boost] = actor.pose;
       const f = frame(s);
       const air = this.track.airHeight(s, speed);
-      model.root.position.copy(point(s, lane, .016 + air));
-      model.root.rotation.set(-Math.atan(this.track.gradeAt(s)) * .62, f.heading, Math.atan(f.bank), 'YXZ');
+      const roll = point(s, lane + .4).y - point(s, lane - .4).y;
+      model.root.position.copy(point(s, lane, .016 + air + this.track.rumbleAt(s) * speed * .002));
+      model.root.rotation.set(-Math.atan(this.track.gradeAt(s)) * .62, f.heading, Math.atan(roll / .8), 'YXZ');
       model.under.visible = !this.track.gapAt(s);
       model.body.rotation.y = yaw;
       model.flame.visible = !model.ghost && boost > 0;

@@ -46,7 +46,8 @@ export function checkpointAt(s: number, track = RED_BASIN) {
 }
 
 export function advance(d: Driver, p: Pose, elapsed: number, dt: number, track = RED_BASIN) {
-  if (d.finish !== null || Math.abs(p[0] - d.pose[0]) > 67 * (dt + .14) / track.length) return false;
+  const scale = Math.max(1, track.progressScale(d.pose[0], d.pose[1]), track.progressScale(p[0], p[1]));
+  if (d.finish !== null || Math.abs(p[0] - d.pose[0]) > 67 * scale * (dt + .14) / track.length) return false;
   if (Math.floor(p[0]) === Math.floor(d.pose[0])) {
     const [left, right] = track.laneBounds(p[0], p[1], d.pose[0], d.pose[1]);
     if (p[1] < left || p[1] > right) return false;
