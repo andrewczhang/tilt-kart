@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { getTrack } from '../src/circuit';
-import type { Pose } from '../src/drive';
-import { decodeGhost, encodeGhost, ghostPose, ghostTimeAt, MAX_LAP_MS } from '../src/ghost';
+import { MAX_BOOST_SPEED, type Pose } from '../src/drive';
+import { decodeGhost, encodeGhost, ghostPose, ghostTimeAt, GHOST_INTERVAL, MAX_LAP_MS } from '../src/ghost';
 import { TimeTrial } from '../src/time-trial';
 import { TRACK_IDS } from '../src/tracks';
 import { timeTrialRequest, validSubmission } from '../worker/time-trial';
@@ -79,4 +79,21 @@ test('rejects a large request without a Content-Length before touching D1', asyn
   });
   assert.equal(req.headers.has('Content-Length'), false);
   assert.equal((await timeTrialRequest(req, {} as D1Database, TRACK_IDS[0])).status, 400);
+});
+
+test('rejects a lap and a single sample that exceed the boosted distance limit', () => {
+  const track = getTrack();
+  const lapAt = (speed: number) => Math.ceil(track.length / speed * 1000 / GHOST_INTERVAL) * GHOST_INTERVAL;
+  const submission = (lapMs: number, firstStep = 0) => {
+    const intervals = lapMs / GHOST_INTERVAL;
+    const poses = Array.from({ length: intervals + 1 }, (_, i): Pose => {
+      const s = firstStep && i ? firstStep + (1 - firstStep) * (i - 1) / (intervals - 1) : i / intervals;
+      return [s, 0, 0, MAX_BOOST_SPEED, 0, 1];
+    });
+    return { lapMs, name: 'Driver', driverId: uuid, ghost: encodeGhost(poses) };
+  };
+  assert.equal(validSubmission(submission(lapAt(60)), track.id), null);
+  const legalTime = lapAt(50);
+  assert.ok(validSubmission(submission(legalTime), track.id));
+  assert.equal(validSubmission(submission(legalTime, 60 * GHOST_INTERVAL / 1000 / track.length), track.id), null);
 });

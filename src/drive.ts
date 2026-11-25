@@ -7,6 +7,7 @@ export type Pose = [s: number, lane: number, yaw: number, speed: number, drift: 
 export const PADS = RED_BASIN.pads;
 export const PAD_WIDTH = 3.3;
 export const PAD_LENGTH = 4.4;
+export const MAX_BOOST_SPEED = 56;
 
 export function grid(slot: number, track = RED_BASIN): Kart {
   return { s: -(5 + Math.floor(slot / 2) * 5) / track.length, lane: slot % 2 ? 2.2 : -2.2, yaw: 0, speed: 0, drift: 0, boost: 0, steer: 0, brakeHeld: false, spin: 0, star: 0 };
@@ -52,7 +53,7 @@ export function drive(k: Kart, input: Input, dt: number, track = RED_BASIN) {
   k.brakeHeld = input.brake;
   const starred = k.star > 0;
   const boosting = k.boost > 0;
-  const max = starred ? 62 : boosting ? (k.boost > 1.45 ? 60 : 56) : slip ? 35 : input.brake ? 12 : 42;
+  const max = starred ? 62 : boosting ? (k.boost > 1.45 ? 60 : MAX_BOOST_SPEED) : slip ? 35 : input.brake ? 12 : 42;
   const accel = input.brake && !slip ? -27 : starred ? 32 - k.speed * .25 : boosting || input.gas || slip ? 24 - k.speed * .29 : -8;
   k.speed = clamp(k.speed + accel * dt, 0, Math.max(0, k.speed - (slip ? 9 : 15) * dt, max));
   k.boost = Math.max(0, k.boost - dt);

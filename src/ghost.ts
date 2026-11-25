@@ -3,7 +3,9 @@ import type { Pose } from './drive';
 export const GHOST_INTERVAL = 50;
 export const MAX_LAP_MS = 180_000;
 const BYTES = 12;
-const SCALES = [65535, 100, 10000, 100, 10000, 10000];
+const PROGRESS_SCALE = 65535;
+const SCALES = [PROGRESS_SCALE, 100, 10000, 100, 10000, 10000];
+export const GHOST_PROGRESS_QUANTUM = 1 / PROGRESS_SCALE;
 export const MAX_GHOST_LENGTH = Math.ceil((MAX_LAP_MS / GHOST_INTERVAL + 1) * BYTES / 3) * 4;
 
 export type Replay = { lapMs: number; ghost: string };

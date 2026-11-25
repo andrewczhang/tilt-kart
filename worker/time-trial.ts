@@ -1,9 +1,9 @@
 import { getTrack } from '../src/circuit';
-import { decodeGhost, GHOST_INTERVAL, MAX_GHOST_LENGTH, type Replay, type Standing } from '../src/ghost';
+import { MAX_BOOST_SPEED } from '../src/drive';
+import { decodeGhost, GHOST_INTERVAL, GHOST_PROGRESS_QUANTUM, MAX_GHOST_LENGTH, type Replay, type Standing } from '../src/ghost';
 import { type TrackId } from '../src/tracks';
 
 const MAX_BODY_BYTES = MAX_GHOST_LENGTH + 512;
-const MAX_METERS_PER_SECOND = 65;
 const DRIVER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 type Submission = Replay & Standing & { driverId: string };
 
@@ -15,15 +15,15 @@ export function validSubmission(value: unknown, trackId: TrackId): Submission | 
   const trimmed = name.trim();
   if (!trimmed || trimmed.length > 20 || /[\u0000-\u001f\u007f]/.test(trimmed)) return null;
   const track = getTrack(trackId);
-  if (lapMs < track.length / MAX_METERS_PER_SECOND * 1000) return null;
+  if (lapMs / 1000 * MAX_BOOST_SPEED < track.length) return null;
   const replay = decodeGhost(lapMs, ghost);
   if (!replay) return null;
   for (const [i, [s, lane, yaw, speed, drift, boost]] of replay.poses.entries()) {
-    if (Math.abs(lane) > track.width / 2 || Math.abs(yaw) > 1 || speed < 0 || speed > MAX_METERS_PER_SECOND
+    if (Math.abs(lane) > track.width / 2 || Math.abs(yaw) > 1 || speed < 0 || speed > MAX_BOOST_SPEED
       || drift < 0 || drift > 1 || boost < 0 || boost > 1.5) return null;
     if (!i) continue;
     const dt = (Math.min(i * GHOST_INTERVAL, lapMs) - (i - 1) * GHOST_INTERVAL) / 1000;
-    if (s - replay.poses[i - 1][0] > MAX_METERS_PER_SECOND * dt / track.length + 1 / 65535) return null;
+    if (s - replay.poses[i - 1][0] > MAX_BOOST_SPEED * dt / track.length + GHOST_PROGRESS_QUANTUM) return null;
   }
   return { driverId, name: trimmed, lapMs, ghost };
 }
