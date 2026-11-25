@@ -13,9 +13,10 @@ export class RaceTiming {
 
   constructor(private track: TrackId = DEFAULT_TRACK) {}
 
-  step(before: number, after: number, elapsed: number, duration: number) {
+  step(before: number, after: number, elapsed: number, duration: number, localFinish?: number) {
     for (let lap = Math.max(1, Math.floor(before) + 1); lap <= LAPS && after >= lap; lap++) {
-      this.crossings[lap] ??= mix(Math.max(0, elapsed - duration), elapsed, (lap - before) / (after - before));
+      this.crossings[lap] ??= (lap === LAPS ? localFinish : undefined)
+        ?? mix(Math.max(0, elapsed - duration), elapsed, (lap - before) / (after - before));
     }
   }
 

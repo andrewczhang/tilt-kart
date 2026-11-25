@@ -160,3 +160,10 @@ test('rejoining mid-race does not invent lap splits before the first observed cr
   timing.step(2.9, 3.1, 30_010, 20);
   assert.deepEqual(timing.splits(true), [undefined, undefined, 11_000]);
 });
+
+test('a clamped local finish uses the crossing time instead of the end of the frame', () => {
+  const timing = new RaceTiming();
+  timing.step(1.9, 2.1, 19_010, 20);
+  timing.step(2.9, 3, 30_020, 40, 30_005);
+  assert.deepEqual(timing.splits(true), [undefined, undefined, 11_005]);
+});

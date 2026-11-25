@@ -441,8 +441,8 @@ function tick(now: number) {
     }
     const mine = pose(local);
     if (screen === 'race' && elapsed >= 0) {
-      const progress = !localRace && mine[0] >= LAPS ? LAPS : local.s;
-      timing.step(before, progress, Math.min(elapsed, LIMIT), dt * 1000);
+      const progress = !localRace && mine[0] >= LAPS ? Math.max(LAPS, local.s) : local.s;
+      timing.step(before, progress, Math.min(elapsed, LIMIT), dt * 1000, localRace?.human.finish ?? undefined);
     }
     if (!localRace && !room.complete && elapsed >= LIMIT && checkedDeadline !== room.start && socket?.readyState === WebSocket.OPEN) {
       socket.send('status');
