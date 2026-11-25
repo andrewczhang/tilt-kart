@@ -34,9 +34,7 @@ export function advance(d: Driver, p: Pose, elapsed: number, dt: number) {
   if (d.finish !== null || p[0] < d.pose[0] || p[0] - d.pose[0] > 59 * (dt + .14) / LENGTH) return false;
   d.pose = p;
   const checkpoint = Math.min(LAPS * SECTORS, Math.floor(p[0] * SECTORS));
-  if (checkpoint === d.checkpoint + 1) {
-    d.checkpoint = checkpoint;
-    if (checkpoint === LAPS * SECTORS) d.finish = elapsed;
-  }
+  if (checkpoint > d.checkpoint) d.checkpoint = checkpoint;
+  if (d.checkpoint === LAPS * SECTORS) d.finish = elapsed;
   return true;
 }

@@ -60,3 +60,18 @@ test('room judges from the ordered checkpoints and rejects implausible poses', (
   other.finish = d.finish + 10;
   assert.deepEqual(rank([other, d, driver('c', 'DNF', 2)]).map(p => p.id), ['a', 'b', 'c']);
 });
+
+test('a delayed pose credits each checkpoint through the finish line', () => {
+  const d = driver('a', 'Test', 0);
+  const beforeTwoCrossings = 1 / SECTORS - .01;
+  const afterTwoCrossings = 2 / SECTORS + .01;
+  const timeFor = (distance: number) => distance * LENGTH / 45;
+  assert.ok(advance(d, [beforeTwoCrossings, 0, 0, 45, 0, 0], 5000, timeFor(beforeTwoCrossings - d.pose[0])));
+  assert.equal(d.checkpoint, 0);
+  assert.ok(advance(d, [afterTwoCrossings, 0, 0, 45, 0, 0], 10000, timeFor(afterTwoCrossings - beforeTwoCrossings)));
+  assert.equal(d.checkpoint, 2);
+  assert.equal(d.finish, null);
+  assert.ok(advance(d, [LAPS, 0, 0, 45, 0, 0], 70000, timeFor(LAPS - afterTwoCrossings)));
+  assert.equal(d.checkpoint, LAPS * SECTORS);
+  assert.equal(d.finish, 70000);
+});
