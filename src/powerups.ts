@@ -76,6 +76,13 @@ export type PowerupCallbacks = {
 };
 
 export type RaceActor = { id: string; name: string; slot: number; pose: Pose; online?: boolean; finish?: number | null };
+export type LocalItemRacer = { id: string; kart: Kart; place: number; before?: TrackPosition };
+type LocalItemField = { playerActive: boolean; bots: readonly LocalItemRacer[] };
+type HitItem = 'banana' | 'shell' | 'homing' | 'star';
+type Inventory = {
+  held: PowerupId | null;
+  rolling: { timer: number; tick: number; display: PowerupId; final: PowerupId } | null;
+};
 
 const HID = /^[a-zA-Z0-9_-]{1,24}$/;
 
@@ -171,9 +178,10 @@ export class PowerupState {
   hazards: Hazard[] = [];
   projectiles: Projectile[] = [];
   held: PowerupId | null = null;
-  rolling: { timer: number; tick: number; display: PowerupId; final: PowerupId } | null = null;
+  rolling: Inventory['rolling'] = null;
   banner: { text: string; color: string; timer: number } | null = null;
   readonly effects = new Map<string, KartFx>();
+  private readonly botItems = new Map<string, Inventory>();
 
   constructor() {
     this.reset();
@@ -187,6 +195,7 @@ export class PowerupState {
     this.rolling = null;
     this.banner = null;
     this.effects.clear();
+    this.botItems.clear();
   }
 
   get displayItem(): PowerupId | null {
@@ -199,6 +208,10 @@ export class PowerupState {
 
   fxOf(id: string): KartFx {
     return this.effects.get(id) ?? { star: 0, spin: 0 };
+  }
+
+  botInventory(id: string): Readonly<Inventory> | undefined {
+    return this.botItems.get(id);
   }
 
   stepSpectator(dt: number, actors: RaceActor[], track: Circuit = RED_BASIN) {
@@ -265,7 +278,8 @@ export class PowerupState {
     cb: PowerupCallbacks = {},
     rand: () => number = Math.random,
     track: Circuit = RED_BASIN,
-    before: TrackPosition = local
+    before: TrackPosition = local,
+    field?: LocalItemField
   ) {
     for (const b of this.boxes) {
       if (b.cooldown > 0) b.cooldown = Math.max(0, b.cooldown - dt);
@@ -281,41 +295,40 @@ export class PowerupState {
       fx.spin = Math.max(0, fx.spin - dt);
       if (fx.star === 0 && fx.spin === 0) this.effects.delete(id);
     }
-    if (local.star > 0 || local.spin > 0) {
-      this.effects.set(localId, { star: local.star, spin: local.spin });
-    } else {
-      this.effects.delete(localId);
-    }
-
-    if (this.rolling) {
-      this.rolling.timer -= dt;
-      this.rolling.tick -= dt;
-      if (this.rolling.timer <= 0) {
-        this.held = this.rolling.final;
-        this.rolling = null;
-        cb.sfx?.('ready');
-      } else if (this.rolling.tick <= 0) {
-        const idx = (POWERUP_LIST.indexOf(this.rolling.display) + 1) % POWERUP_LIST.length;
-        this.rolling.display = POWERUP_LIST[idx];
-        this.rolling.tick = 0.085;
-        cb.sfx?.('roulette');
+    const participants: LocalItemRacer[] = field?.playerActive === false ? [] : [{ id: localId, kart: local, place, before }];
+    participants.push(...field?.bots ?? []);
+    for (const racer of participants) {
+      const { id, kart } = racer;
+      if (kart.star > 0 || kart.spin > 0) this.effects.set(id, { star: kart.star, spin: kart.spin });
+      else this.effects.delete(id);
+      const isPlayer = id === localId;
+      let inventory = isPlayer ? this : this.botItems.get(id);
+      if (!inventory) {
+        inventory = { held: null, rolling: null };
+        this.botItems.set(id, inventory);
       }
+      this.stepInventory(inventory, racer, dt, total, solo, rand, track, isPlayer ? cb : {});
     }
-
-    // Box pickup check for local kart
-    for (const b of this.boxes) {
-      if (b.cooldown > 0) continue;
-      if (crossesBox(before, local, b, track.length)) {
-        b.cooldown = BOX_RESPAWN;
-        cb.emit?.({ kind: 'pickup', box: b.id });
-        if (!this.held && !this.rolling) {
-          const final = rollPowerup(place, total, solo, rand);
-          this.rolling = { timer: ROULETTE_TIME, tick: 0.07, display: POWERUP_LIST[0], final };
-          cb.sfx?.('pickup');
+    const targets: { id: string; s: number; lane: number; kart?: Kart }[] =
+      participants.map(({ id, kart }) => ({ id, s: kart.s, lane: kart.lane, kart }));
+    if (!field && cb.onActorHit) {
+      for (const actor of actors) {
+        if (actor.id !== localId && actor.online !== false && actor.finish == null) {
+          targets.push({ id: actor.id, s: actor.pose[0], lane: actor.pose[1], kart: undefined });
         }
-        break;
       }
     }
+    const hit = (target: (typeof targets)[number], item: HitItem, owner: string, hid?: string) => {
+      if (target.id === localId) this.hitLocal(localId, local, item, hid, cb);
+      else if (target.kart) {
+        if (this.hitKart(target.id, target.kart) && owner === localId) cb.sfx?.('hit');
+      }
+      else {
+        this.effects.set(target.id, { star: 0, spin: SPIN_DURATION });
+        cb.onActorHit?.(target.id, item);
+        cb.sfx?.('hit');
+      }
+    };
 
     // Update hazards
     for (let i = this.hazards.length - 1; i >= 0; i--) {
@@ -326,22 +339,11 @@ export class PowerupState {
         this.hazards.splice(i, 1);
         continue;
       }
-      if (!(h.owner === localId && h.age < 0.65) && trackDistance(local.s, h.s, track.length) < 2.1 && Math.abs(local.lane - h.lane) < 1.55) {
+      const target = targets.find(a => !(h.owner === a.id && h.age < 0.65)
+        && trackDistance(a.s, h.s, track.length) < 2.1 && Math.abs(a.lane - h.lane) < 1.55);
+      if (target) {
         this.hazards.splice(i, 1);
-        this.hitLocal(localId, local, 'banana', h.id, cb);
-        continue;
-      }
-      if (cb.onActorHit) {
-        for (const a of actors) {
-          if (a.id === localId || a.online === false || a.finish != null || (h.owner === a.id && h.age < 0.65)) continue;
-          if (trackDistance(a.pose[0], h.s, track.length) < 2.1 && Math.abs(a.pose[1] - h.lane) < 1.55) {
-            this.hazards.splice(i, 1);
-            this.effects.set(a.id, { star: 0, spin: SPIN_DURATION });
-            cb.onActorHit(a.id, 'banana');
-            cb.sfx?.('hit');
-            break;
-          }
-        }
+        hit(target, 'banana', h.owner, h.id);
       }
     }
 
@@ -379,63 +381,72 @@ export class PowerupState {
       }
       p.lane = clamp(p.lane, -wall, wall);
 
-      // Check collision with local kart
-      if (!(p.owner === localId && p.age < 0.4) && trackDistance(local.s, p.s, track.length) < 2.4 && Math.abs(local.lane - p.lane) < 1.65) {
+      const target = targets.find(a => !(p.owner === a.id && p.age < 0.4)
+        && trackDistance(a.s, p.s, track.length) < 2.4 && Math.abs(a.lane - p.lane) < 1.65);
+      if (target) {
         this.projectiles.splice(i, 1);
-        this.hitLocal(localId, local, p.kind, p.id, cb);
-        continue;
-      }
-      if (cb.onActorHit) {
-        for (const a of actors) {
-          if (a.id === localId || a.online === false || a.finish != null || (p.owner === a.id && p.age < 0.4)) continue;
-          if (trackDistance(a.pose[0], p.s, track.length) < 2.4 && Math.abs(a.pose[1] - p.lane) < 1.65) {
-            this.projectiles.splice(i, 1);
-            this.effects.set(a.id, { star: 0, spin: SPIN_DURATION });
-            cb.onActorHit(a.id, p.kind);
-            cb.sfx?.('hit');
-            break;
-          }
-        }
+        hit(target, p.kind, p.owner, p.id);
       }
     }
 
-    // Star-powered bump check (local starred bumps bots; remote starred bumps local)
-    if (local.star > 0 && cb.onActorHit) {
-      const point = track.point(local.s, local.lane);
-      for (const a of actors) {
-        if (a.id === localId || a.online === false || a.finish != null) continue;
-        if (this.fxOf(a.id).spin > 0) continue;
-        if (kartContactDistance(point, track.point(a.pose[0], a.pose[1])) !== null) {
-          this.effects.set(a.id, { star: 0, spin: SPIN_DURATION });
-          cb.onActorHit(a.id, 'star');
-          cb.sfx?.('hit');
-        }
-      }
-    } else if (local.star <= 0 && local.spin <= 0) {
-      const point = track.point(local.s, local.lane);
-      for (const a of actors) {
-        if (a.id === localId || a.online === false) continue;
-        const fx = this.effects.get(a.id);
-        if (!fx || fx.star <= 0) continue;
-        if (kartContactDistance(point, track.point(a.pose[0], a.pose[1])) !== null) {
-          this.hitLocal(localId, local, 'star', undefined, cb);
-          break;
-        }
-      }
+    const stars = field ? targets.filter(a => (a.kart?.star ?? 0) > 0)
+      : local.star > 0 ? targets.filter(a => a.id === localId)
+      : actors.filter(a => a.id !== localId && a.online !== false && a.finish == null && this.fxOf(a.id).star > 0)
+        .map(a => ({ id: a.id, s: a.pose[0], lane: a.pose[1] }));
+    if (!stars.length) return;
+    const starPoints = stars.map(a => ({ id: a.id, point: track.point(a.s, a.lane) }));
+    for (const target of targets) {
+      if ((!field && local.star <= 0 && target.id !== localId) || this.fxOf(target.id).spin > 0) continue;
+      const point = track.point(target.s, target.lane);
+      const source = starPoints.find(a => a.id !== target.id && kartContactDistance(point, a.point) !== null);
+      if (source) hit(target, 'star', source.id);
     }
   }
 
-  private hitLocal(localId: string, local: Kart, item: 'banana' | 'shell' | 'homing' | 'star', hid: string | undefined, cb: PowerupCallbacks) {
+  private stepInventory(inventory: Inventory, racer: LocalItemRacer, dt: number, total: number, solo: boolean,
+    rand: () => number, track: Circuit, cb: PowerupCallbacks) {
+    const { kart, place, before = kart } = racer;
+    if (inventory.rolling) {
+      const roll = inventory.rolling;
+      roll.timer -= dt;
+      roll.tick -= dt;
+      if (roll.timer <= 0) {
+        inventory.held = roll.final;
+        inventory.rolling = null;
+        cb.sfx?.('ready');
+      } else if (roll.tick <= 0) {
+        roll.display = POWERUP_LIST[(POWERUP_LIST.indexOf(roll.display) + 1) % POWERUP_LIST.length];
+        roll.tick = .085;
+        cb.sfx?.('roulette');
+      }
+    }
+    const box = this.boxes.find(b => b.cooldown <= 0 && crossesBox(before, kart, b, track.length));
+    if (!box) return;
+    box.cooldown = BOX_RESPAWN;
+    cb.emit?.({ kind: 'pickup', box: box.id });
+    if (!inventory.held && !inventory.rolling) {
+      inventory.rolling = { timer: ROULETTE_TIME, tick: .07, display: POWERUP_LIST[0], final: rollPowerup(place, total, solo, rand) };
+      cb.sfx?.('pickup');
+    }
+  }
+
+  private hitKart(id: string, kart: Kart) {
+    if (kart.star > 0 || kart.spin > 0) return false;
+    kart.spin = SPIN_DURATION;
+    kart.boost = 0;
+    kart.turbo = 0;
+    kart.drift = 0;
+    kart.speed = Math.min(kart.speed, 14);
+    this.effects.set(id, { star: 0, spin: kart.spin });
+    return true;
+  }
+
+  private hitLocal(localId: string, local: Kart, item: HitItem, hid: string | undefined, cb: PowerupCallbacks) {
     if (local.star > 0) {
       if (hid) cb.emit?.({ kind: 'hit', target: localId, hid, item });
       return;
     }
-    if (local.spin > 0) return;
-    local.spin = SPIN_DURATION;
-    local.boost = 0;
-    local.turbo = 0;
-    local.drift = 0;
-    local.speed = Math.min(local.speed, 14);
+    if (!this.hitKart(localId, local)) return;
     const label = item === 'banana' ? 'SLIPPED ON PEEL' : item === 'homing' ? 'HIT BY HOMING SHELL' : item === 'star' ? 'BUMPED BY STAR' : 'HIT BY SHELL';
     this.announce(label, '#ec583b', 1.5);
     cb.sfx?.('hit');
@@ -443,15 +454,24 @@ export class PowerupState {
   }
 
   useItem(localId: string, local: Kart, actors: RaceActor[], cb: PowerupCallbacks = {}, track: Circuit = RED_BASIN): PowerupId | null {
-    if (this.rolling || !this.held || local.spin > 0) return null;
-    const item = this.held;
-    this.held = null;
+    return this.useInventory(localId, local, this, actors, cb, track);
+  }
+
+  useBotItem(id: string, kart: Kart, actors: RaceActor[], track: Circuit): PowerupId | null {
+    const inventory = this.botItems.get(id);
+    return inventory ? this.useInventory(id, kart, inventory, actors, {}, track) : null;
+  }
+
+  private useInventory(localId: string, local: Kart, inventory: Inventory, actors: RaceActor[], cb: PowerupCallbacks, track: Circuit): PowerupId | null {
+    if (inventory.rolling || !inventory.held || local.spin > 0) return null;
+    const item = inventory.held;
+    inventory.held = null;
 
     if (item === 'turbo') {
       local.turbo = 1.95;
       local.boost = Math.max(local.boost, local.turbo);
       local.speed = Math.max(local.speed, 54);
-      this.announce('TURBO BOOST', POWERUPS.turbo.color, 1.2);
+      if (inventory === this) this.announce('TURBO BOOST', POWERUPS.turbo.color, 1.2);
       cb.sfx?.('turbo');
       return item;
     }
@@ -462,7 +482,7 @@ export class PowerupState {
       local.boost = Math.max(local.boost, 1.4);
       local.speed = Math.max(local.speed, 52);
       this.effects.set(localId, { star: STAR_DURATION, spin: 0 });
-      this.announce('STAR POWER', POWERUPS.star.color, 1.6);
+      if (inventory === this) this.announce('STAR POWER', POWERUPS.star.color, 1.6);
       cb.sfx?.('star');
       cb.emit?.({ kind: 'star' });
       return item;

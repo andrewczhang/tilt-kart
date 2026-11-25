@@ -1,14 +1,84 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { Vector3 } from 'three';
 import { BotPilot, DIFFICULTIES, LocalRace, MAX_RACERS } from '../src/bots';
 import { LAPS, LENGTH, LIMIT, RED_BASIN, SECTORS, WIDTH, getTrack, point } from '../src/circuit';
+import { newCup } from '../src/cups';
 import { drive, grid } from '../src/drive';
+import { PowerupState, type PowerupId } from '../src/powerups';
 import { driver, rank, validPose } from '../src/rules';
 import { TRACK_IDS } from '../src/tracks';
 import { centerSteer } from './steering';
 
 const idle = { gas: false, brake: false, steer: 0 };
 const dt = 1 / 60;
+
+test('higher difficulty pursues cheap available boxes without diverting for costly or occupied ones', () => {
+  const track = {
+    ...RED_BASIN, pads: [],
+    frame: (s: number) => ({ x: 0, y: 0, z: s * RED_BASIN.length, heading: 0, bank: 0 }),
+    point: (s: number, lane = 0, height = 0) => new Vector3(lane, height, s * RED_BASIN.length),
+  };
+  const kart = { ...grid(3, track), s: .4, lane: 0, speed: 29 };
+  const box = { id: 0, s: kart.s + 15 / track.length, lane: 2, cooldown: 0 };
+  const steer = (difficulty: typeof DIFFICULTIES[number], lane: number, cooldown = 0, rolling = false) => {
+    const pilot = new BotPilot(track, 3, difficulty);
+    const usual = pilot.input(kart, 1000, []).steer;
+    return pilot.input(kart, 1000, [], { boxes: [{ ...box, lane, cooldown }], rolling, rand: () => 1 }).steer - usual;
+  };
+  assert.equal(steer('Easy', box.lane), 0);
+  assert.ok(steer('Hard', box.lane) > .4);
+  assert.equal(steer('Hard', 5), 0);
+  assert.equal(steer('Hard', box.lane, 1), 0);
+  assert.equal(steer('Hard', box.lane, 0, true), 0);
+});
+
+test('bots time attacks, peels, and boosts; Easy sometimes uses items without a target', () => {
+  const straight = { ...RED_BASIN, pads: [], frame: (s: number) => ({ ...RED_BASIN.frame(s), heading: 0 }) };
+  const bend = { ...straight, frame: (s: number) => ({ ...straight.frame(s), heading: s * 30 }) };
+  const kart = { ...grid(0, straight), s: .4, lane: 0, speed: 32 };
+  const rival = driver('rival', 'Rival', 1, straight);
+  const use = (held: PowerupId, gap?: number, lane = 0, track = straight, speed = kart.speed, difficulty: typeof DIFFICULTIES[number] = 'Hard', roll = .9) => {
+    rival.pose = [kart.s + (gap ?? 0) / track.length, lane, 0, 30, 0, 0];
+    return new BotPilot(track, 0, difficulty).input({ ...kart, speed }, 1000, gap === undefined ? [] : [rival],
+      { held, boxes: [], rolling: false, rand: () => roll }).useItem;
+  };
+  assert.equal(use('shell', 12), true);
+  assert.equal(use('shell', 12, 4), false);
+  assert.equal(use('shell', -12), false);
+  assert.equal(use('homing', 45, 4), true);
+  assert.equal(use('homing', 130), false);
+  assert.equal(use('banana', -8), true);
+  assert.equal(use('banana', 8), false);
+  assert.equal(use('banana', -20), false);
+  assert.equal(use('turbo'), true);
+  assert.equal(use('star', undefined, 0, bend), false);
+  assert.equal(use('star', undefined, 0, bend, 12), true);
+  assert.equal(use('shell', undefined, 0, straight, 32, 'Easy', .1), true);
+  assert.equal(use('shell', undefined, 0, straight, 32, 'Easy', .9), false);
+});
+
+test('Grand Prix bots collect shared boxes and use items even after the player finishes', () => {
+  const cup = newCup('afterburn');
+  const race = new LocalRace(MAX_RACERS, 0, RED_BASIN, cup);
+  const state = new PowerupState();
+  assert.notEqual(race.room.track, RED_BASIN.id);
+  race.human.finish = 1;
+  const items = { state, rand: () => .01 };
+  race.step(idle, dt, -250, items);
+  assert.ok(state.boxes.every(box => box.cooldown === 0));
+  const bots = race.room.drivers.filter(d => d !== race.human);
+  let collected = false, used = false;
+  for (let frame = 1; frame <= 1200 && !used; frame++) {
+    race.step(idle, dt, frame * dt * 1000, items);
+    collected ||= bots.some(bot => !!state.botInventory(bot.id)?.rolling);
+    used ||= bots.some(bot => bot.pose[5] > 1.5 || state.fxOf(bot.id).star > 0);
+  }
+  assert.ok(collected);
+  assert.ok(used);
+  assert.equal(state.displayItem, null);
+  assert.equal(state.banner, null);
+});
 
 test('a full local grid waits for the countdown, then bots drive distinct lines and finish', () => {
   const race = new LocalRace(MAX_RACERS, 3500);
