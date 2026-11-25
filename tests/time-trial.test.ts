@@ -80,7 +80,7 @@ test('drift release keeps the standard boost speed cap in time trials', () => {
   assert.ok(racer.speed > MAX_BOOST_SPEED);
 });
 
-test('runs time out after the simulated time limit without a replay', () => {
+test('runs time out at the wall-clock limit without a replay', () => {
   const trial = new TimeTrial(getTrack(), 0);
   for (let t = trial.start + 50; !trial.finished && t <= trial.start + MAX_LAP_MS + 50; t += 50) {
     trial.step({ ...input, gas: false }, t);
@@ -90,20 +90,39 @@ test('runs time out after the simulated time limit without a replay', () => {
   assert.equal(trial.replay, undefined);
 });
 
-test('long frame gaps advance the lap clock and replay at the clamped physics rate', () => {
-  const track = getTrack();
-  const regular = new TimeTrial(track, 0);
-  const slowFrames = new TimeTrial(track, 0);
-  for (let i = 1; !regular.finished; i++) {
-    const controls = { ...input, steer: centerSteer(regular.kart, track) };
-    regular.step(controls, regular.start + i * 50);
-    slowFrames.step(controls, slowFrames.start + i * 200);
-    assert.equal(slowFrames.elapsed, regular.elapsed);
-    assert.equal(slowFrames.kart.s, regular.kart.s);
+test('Frostline Pass uses wall time and the same replay at 60 and 15 FPS', () => {
+  const track = getTrack('frostline');
+  const regular = new TimeTrial(track, 17_321);
+  const slowFrames = new TimeTrial(track, 17_321);
+  let controls = input;
+  let wall = 0;
+  for (let i = 0; !slowFrames.finished; i++) {
+    const now = regular.start + i * 1000 / 60;
+    wall = now - regular.start;
+    assert.ok(wall <= MAX_LAP_MS);
+    if (i % 4 === 0) controls = { ...input, steer: centerSteer(slowFrames.kart, track) };
+    regular.step(controls, now);
+    if (i % 4 === 0) {
+      slowFrames.step(controls, now);
+      if (!slowFrames.finished) assert.equal(slowFrames.elapsed, wall);
+      assert.equal(slowFrames.kart.s, regular.kart.s);
+    }
   }
   assert.ok(regular.replay);
   assert.deepEqual(slowFrames.replay, regular.replay);
+  assert.ok(regular.replay.lapMs <= wall && regular.replay.lapMs > wall - 1000 / 15 - 10);
   assert.ok(validSubmission({ ...slowFrames.replay, name: 'Driver', driverId: uuid }, track.id));
+});
+
+test('a frame gap longer than one second interrupts the lap without creating a replay', () => {
+  const trial = new TimeTrial(getTrack(), 0);
+  trial.step(input, trial.start + 800);
+  assert.equal(trial.elapsed, 800);
+  assert.ok(trial.kart.s > 0);
+  trial.step(input, trial.start + 1801);
+  assert.equal(trial.interrupted, true);
+  assert.equal(trial.finished, true);
+  assert.equal(trial.replay, undefined);
 });
 
 test('rejects implausible or malformed submissions', () => {

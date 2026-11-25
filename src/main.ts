@@ -578,9 +578,9 @@ function trialResults(attempt: Trial) {
   if (improved) writePreference(trialKey(race.track.id), JSON.stringify(replay));
   const best = improved ? replay : personal?.replay;
   show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet"><p class="identity">Time trial / ${race.track.name}</p>
-    <h2 class="title" id="result-title">${replay ? formatLap(replay.lapMs) : 'Time expired'}</h2>
+    <h2 class="title" id="result-title">${replay ? formatLap(replay.lapMs) : race.interrupted ? 'Lap interrupted' : 'Time expired'}</h2>
     ${best ? `<p>${improved ? 'New personal best' : `Personal best · ${formatLap(best.lapMs)}`}</p>` : ''}
-    <p id="result-status" role="status"></p>
+    <p id="result-status" role="status">${race.interrupted ? 'The game stopped updating for too long. This lap wasn’t submitted.' : ''}</p>
     <div class="actions">${button('retry', 'Race again')}${button('back', 'Leaderboard', true)}</div>
     </div></section>`);
   doOn('back', openTimeTrials);
