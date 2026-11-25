@@ -68,6 +68,40 @@ test('Apex Arena crosses itself at two separated heights', () => {
   assert.deepEqual([low, high], before);
 });
 
+test('split roads retain progression but disallow changing roads across the median', () => {
+  for (const id of ['red-basin', 'switchyard', 'saltwater', 'cedar'] as const) {
+    const track = getTrack(id), branch = track.branch!;
+    const station = (branch.start + branch.end) / 2;
+    const alt = track.branchAt(station)!;
+    const midpoint = (track.widthAt(station) / 2 + Math.abs(alt.center) - alt.width / 2) / 2 * alt.side;
+    assert.equal(validPose([station, midpoint, 0, 40, 0, 0], track), false, id);
+    assert.equal(validPose([station, alt.center, 0, 40, 0, 0], track), true, id);
+    const d = driver('branch', 'Driver', 0, track);
+    const old = station - .002;
+    d.pose = [old, track.branchAt(old)!.center, 0, 40, 0, 0];
+    assert.equal(advance(d, [station, 0, 0, 40, 0, 0], 10_000, .08, track), false, id);
+    assert.ok(advance(d, [station, alt.center, 0, 40, 0, 0], 10_000, .08, track), id);
+    assert.equal(d.checkpoint, checkpointAt(station, track), id);
+  }
+});
+
+test('ramps lift karts over open gaps and grip varies on ice and lava edges', () => {
+  for (const id of ['frostline', 'saltwater', 'mesa'] as const) {
+    const track = getTrack(id), { start, end, ramp } = track.jumps![0];
+    const middle = (start + end) / 2;
+    assert.equal(track.gapAt(start - .001), false, id);
+    assert.equal(track.gapAt(middle), true, id);
+    assert.equal(track.gapAt(end), false, id);
+    assert.ok(track.airHeight(middle, 42) > 3, id);
+    assert.ok(track.airHeight(middle, 42) > track.airHeight(middle, 25), id);
+    assert.equal(track.airHeight(start - ramp, 42), 0, id);
+  }
+  assert.ok(getTrack('frostline').surfaceAt(.32, 0) < .5);
+  assert.equal(getTrack('cinder').surfaceAt(.60, 0), 1);
+  assert.ok(getTrack('cinder').surfaceAt(.60, 6) < 1);
+  assert.ok(getTrack('arena').widthAt(.62) > getTrack('arena').width + 5);
+});
+
 test('a local race uses its selected track for every entrant', () => {
   const track = getTrack('cedar');
   const race = new LocalRace(8, 0, track);

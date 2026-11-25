@@ -58,16 +58,18 @@ export function drive(k: Kart, input: Input, dt: number, track = RED_BASIN, mode
   substep(dt, step => integrate(k, input, step, track, mode === 'race'));
 }
 
-function project(k: Kart, x: number, z: number, heading: number, track: Circuit) {
-  const border = track.width / 2 - .85;
+function project(k: Kart, x: number, z: number, heading: number, track: Circuit, maxProgress = Infinity) {
+  const previous = k.s, previousLane = k.lane;
   // Project into the nearby track frame, not onto a different leg of the loop.
   for (let i = 0; i < 4; i++) {
     const f = track.frame(k.s);
     k.s += ((x - f.x) * Math.sin(f.heading) + (z - f.z) * Math.cos(f.heading)) / track.length;
   }
+  k.s = Math.min(k.s, maxProgress);
   const next = track.frame(k.s);
   const lane = (x - next.x) * Math.cos(next.heading) - (z - next.z) * Math.sin(next.heading);
-  k.lane = clamp(lane, -border, border);
+  const [left, right] = track.laneBounds(k.s, lane, previous, previousLane);
+  k.lane = clamp(lane, left + .85, right - .85);
   k.yaw = delta(heading - next.heading, TURN);
   return { lane, heading: next.heading };
 }
@@ -155,26 +157,30 @@ function integrate(k: Kart, input: Input, dt: number, track: Circuit, items: boo
   const starred = items && k.star > 0;
   const boosting = k.boost > 0;
   const max = starred ? 62 : items && k.turbo > 0 ? (k.turbo > 1.45 ? 60 : MAX_BOOST_SPEED) : boosting && !input.brake ? BOOST_SPEED : slip ? 35 : input.brake ? 12 : TOP_SPEED;
-  const accel = input.brake && !slip ? -27 : starred ? 32 - k.speed * .25 : boosting || input.gas || slip ? 24 - k.speed * .29 : -8;
-  k.speed = clamp(k.speed + accel * dt, 0, Math.min(items ? Infinity : BOOST_SPEED, Math.max(k.speed - (slip ? 9 : 15) * dt, max)));
+  const airborne = track.gapAt(k.s);
+  const surface = airborne ? .22 : track.surfaceAt(k.s, k.lane);
+  const slope = airborne ? 0 : track.gradeAt(k.s);
+  const accel = input.brake && !slip ? -27 * surface : starred ? 32 - k.speed * .25 : boosting || input.gas || slip ? 24 - k.speed * .29 : -8;
+  k.speed = clamp(k.speed + (accel - slope * 18) * dt, 0, Math.min(items ? Infinity : BOOST_SPEED, Math.max(k.speed - (slip ? 9 : 15) * dt, max)));
   k.turbo = Math.max(0, k.turbo - dt);
   k.boost = Math.max(0, k.boost - dt);
   const previous = k.s, previousLane = k.lane;
   const here = track.frame(previous);
   const turn = k.steer * Math.min(1, k.speed / 10) * (slip ? 3.6 : 3.1) * dt;
-  const grip = 1 - Math.exp(-dt * (k.recovery > 0 ? 2.5 : slip ? 5 : 28));
+  const grip = 1 - Math.exp(-dt * surface * (k.recovery > 0 ? 2.5 : slip ? 5 : 28));
   k.recovery = Math.max(0, k.recovery - dt);
   const heading = here.heading + k.yaw + turn;
   const travelHeading = heading + (k.slipAngle - turn) * (1 - grip);
   const x = here.x + Math.cos(here.heading) * k.lane + Math.sin(travelHeading) * k.speed * dt;
   const z = here.z - Math.sin(here.heading) * k.lane + Math.cos(travelHeading) * k.speed * dt;
 
-  const next = project(k, x, z, heading, track);
+  const next = project(k, x, z, heading, track, input.maxProgress);
   k.slipAngle = travelHeading - heading;
   if (next.lane !== k.lane) {
+    const side = Math.sign(next.lane - k.lane);
     const relative = delta(travelHeading - next.heading, TURN);
     const normal = Math.sin(relative) * k.speed;
-    if (normal * next.lane > 0) {
+    if (normal * side > 0) {
       const tangent = Math.cos(relative) * k.speed;
       const incidence = Math.abs(normal) / k.speed;
       const rebound = -normal * mix(.48, .68, incidence);
@@ -183,9 +189,8 @@ function integrate(k: Kart, input: Input, dt: number, track: Circuit, items: boo
       if (!starred) k.speed = Math.hypot(along, rebound);
       k.yaw = delta(k.yaw + delta(reflected - k.yaw, TURN) * clamp((incidence - .5) * 2, 0, 1), TURN);
       k.slipAngle = delta(reflected - k.yaw, TURN);
-      k.recovery = Math.sin(k.yaw) * Math.sign(next.lane) < .45 ? .07 : 0;
+      k.recovery = Math.sin(k.yaw) * side < .45 ? .07 : 0;
     }
   }
-  k.s = Math.min(input.maxProgress ?? Infinity, k.s);
   activatePads(k, previous, previousLane, track);
 }

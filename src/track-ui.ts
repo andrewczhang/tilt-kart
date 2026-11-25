@@ -16,18 +16,29 @@ const maps = new Map<TrackId, ReturnType<typeof makeMap>>();
 const W = 160, H = 130;
 function makeMap(track: Circuit) {
   const points = Array.from({ length: 181 }, (_, i) => track.point(i / 180));
-  const xs = points.map(p => p.x), zs = points.map(p => p.z);
+  const branch = track.branch;
+  const alternates = branch ? Array.from({length: 33}, (_, i) => {
+    const s = branch.start + (branch.end - branch.start) * i / 32;
+    return track.point(s, track.branchAt(s)?.center ?? branch.side * (track.widthAt(s) - branch.width) / 2);
+  }) : [];
+  const all = [...points, ...alternates];
+  const xs = all.map(p => p.x), zs = all.map(p => p.z);
   const left = Math.min(...xs), right = Math.max(...xs), top = Math.min(...zs), bottom = Math.max(...zs);
   const scale = Math.min((W - 24) / (right - left), (H - 24) / (bottom - top));
   const x = (value: number) => (value - (right + left) / 2) * scale + W / 2;
   const y = (value: number) => (value - (bottom + top) / 2) * scale + H / 2;
-  const path = new Path2D();
-  points.forEach((p, i) => i ? path.lineTo(x(p.x), y(p.z)) : path.moveTo(x(p.x), y(p.z)));
+  const line = (points: {x: number; z: number}[]) => {
+    const path = new Path2D();
+    points.forEach((p, i) => i ? path.lineTo(x(p.x), y(p.z)) : path.moveTo(x(p.x), y(p.z)));
+    return path;
+  };
+  const path = line(points);
   path.closePath();
   const finish = new Path2D();
   const a = track.point(0, -track.width / 2), b = track.point(0, track.width / 2);
   finish.moveTo(x(a.x), y(a.z)); finish.lineTo(x(b.x), y(b.z));
-  return { x, y, path, finish };
+  const gaps = (track.jumps ?? []).map(({start, end}) => line(Array.from({length: 8}, (_, i) => track.point(start + (end - start) * i / 7))));
+  return { x, y, path, finish, alternate: line(alternates), gaps };
 }
 
 type MapActor = Pick<Driver, 'id' | 'slot' | 'pose'> & { ghostColor?: string };
@@ -38,18 +49,24 @@ export function drawTrackMap(canvas: HTMLCanvasElement, track: Circuit, actors: 
     map = makeMap(track);
     maps.set(track.id, map);
   }
-  const { x, y, path, finish } = map;
+  const { x, y, path, finish, alternate, gaps } = map;
   const ctx = canvas.getContext('2d')!;
   ctx.fillStyle = track.wall;
   ctx.fillRect(0, 0, W, H);
   ctx.lineWidth = 4;
   ctx.strokeStyle = track.trim;
   ctx.stroke(path);
+  ctx.lineWidth = 2.5;
+  ctx.setLineDash([3, 2]);
+  ctx.stroke(alternate);
+  ctx.setLineDash([]);
+  ctx.strokeStyle = '#ff9150';
+  for (const gap of gaps) ctx.stroke(gap);
   ctx.lineWidth = 2;
   ctx.strokeStyle = '#253139';
   ctx.stroke(finish);
   const mark = (actor: MapActor) => {
-    const p = track.frame(actor.pose[0]);
+    const p = track.point(actor.pose[0], actor.pose[1]);
     ctx.beginPath(); ctx.fillStyle = actor.ghostColor ?? COLORS[actor.slot];
     ctx.arc(x(p.x), y(p.z), actor.id === own ? 4.5 : 3.3, 0, 2 * Math.PI);
     ctx.fill();

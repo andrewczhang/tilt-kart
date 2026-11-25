@@ -15,7 +15,13 @@ export function themedScenery(world: T.Group, track: Circuit) {
   };
   const floor = -1.2;
   const markers = Array.from({ length: 160 }, (_, i) => track.frame(i / 160));
-  const clear = (x: number, z: number, radius: number) => markers.every(p => Math.hypot(p.x - x, p.z - z) >= radius);
+  const spur = track.branch ? Array.from({ length: 32 }, (_, i) => {
+    const s = track.branch!.start + (track.branch!.end - track.branch!.start) * i / 32;
+    return track.point(s, track.branchAt(s)!.center);
+  }) : [];
+  const clear = (x: number, z: number, radius: number) =>
+    markers.every(p => Math.hypot(p.x - x, p.z - z) >= radius) &&
+    spur.every(p => Math.hypot(p.x - x, p.z - z) >= Math.max(11, radius * .8));
   const ground = new T.Mesh(new T.PlaneGeometry(2600, 2600), new T.MeshLambertMaterial({ color: track.ground }));
   ground.rotation.x = -Math.PI / 2; ground.position.y = floor; world.add(ground);
   const choose = (items: string[]) => items[Math.floor(rand() * items.length)];
@@ -186,9 +192,10 @@ export function themedScenery(world: T.Group, track: Circuit) {
   if (track.id !== 'cedar' && track.id !== 'switchyard') {
     for (let i = 0; i < 61; i++) {
       const s = i / 61, f = track.frame(s);
-      if (f.y < 2.8 || (track.id === 'arena' && f.y > 10 && !markers.every(p => p.y > f.y - 8 || Math.hypot(p.x - f.x, p.z - f.z) > track.width * .93))) continue;
+      if (f.y < 2.8 || track.gapAt(s)) continue;
       for (const side of [-1, 1]) {
         const p = track.point(s, side * (track.width * .31));
+        if (markers.some(m => m.y < p.y - 7 && Math.hypot(m.x - p.x, m.z - p.z) < track.width / 2 + 2)) continue;
         const h = p.y - floor - .65;
         if (h > 0) put('box', p.x, floor + h / 2, p.z, 1.8, h, 1.22, track.wall, f.heading);
       }
