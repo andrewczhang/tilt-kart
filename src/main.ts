@@ -479,6 +479,9 @@ function tick(now: number) {
     followed = target?.id ?? '';
     view.render(target?.pose ?? mine, visible, player, dt);
   } else {
+    if (screen === 'controls' && localRace?.room.start != null) {
+      localRace.step(touch.input(), dt, Date.now() - localRace.room.start);
+    }
     const demo: Pose = [.968 + .009 * Math.sin(now / 4200), 1.5, 0, 0, 0, 0];
     view.render(demo, [], '', dt, true);
     motor.update();
