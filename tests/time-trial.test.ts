@@ -5,7 +5,7 @@ import { BOOST_SPEED, drive, MAX_BOOST_SPEED, type Pose } from '../src/drive';
 import { newDriverId } from '../src/driver-id';
 import { decodeGhost, encodeGhost, ghostPose, ghostTimeAt, GHOST_INTERVAL, MAX_LAP_MS } from '../src/ghost';
 import { TimeTrial } from '../src/time-trial';
-import { TRACK_IDS } from '../src/tracks';
+import { courseLayoutKey, TRACK_IDS } from '../src/tracks';
 import { timeTrialRequest, validSubmission } from '../worker/time-trial';
 import { centerSteer } from './steering';
 
@@ -48,6 +48,19 @@ test('every track produces a server-valid flying lap with the real driving model
       ...replay, name: 'Driver', driverId: uuid,
     }, id);
   }
+});
+
+test('accepts a Twin Mesa replay that steers hard across the jump', () => {
+  const trial = new TimeTrial(getTrack('mesa'), 0);
+  for (let t = trial.start + 16; !trial.finished; t += 16) {
+    const { s } = trial.kart;
+    const brake = s >= .4322 && s < .4584;
+    const steer = brake ? .375 : s >= .4634 && s < .4811 ? -1 : centerSteer(trial.kart, trial.track);
+    trial.step({ ...input, brake, steer }, t);
+  }
+  assert.ok(trial.replay);
+  const submission = { ...trial.replay, name: 'Driver', driverId: uuid };
+  assert.deepEqual(validSubmission(submission, trial.track.id), submission);
 });
 
 test('a time trial can submit a UUID generated without crypto.randomUUID', () => {
@@ -119,6 +132,30 @@ test('rejects a large request without a Content-Length before touching D1', asyn
   });
   assert.equal(req.headers.has('Content-Length'), false);
   assert.equal((await timeTrialRequest(req, {} as D1Database, TRACK_IDS[0])).status, 400);
+});
+
+test('time trial reads, writes, and ranks all use the current layout key', async () => {
+  const track = TRACK_IDS[0];
+  const bindings: unknown[][] = [];
+  const db = {
+    prepare() {
+      return {
+        bind(...values: unknown[]) {
+          bindings.push(values);
+          return { all: async () => ({ results: [] }), first: async () => null };
+        },
+      };
+    },
+    batch: async () => [null, { results: [{ rank: 1 }] }],
+  } as unknown as D1Database;
+  const url = `https://example.test/api/tt/${courseLayoutKey(track)}`;
+  await timeTrialRequest(new Request(`${url}/leaderboard`), db, track, 'leaderboard');
+  await timeTrialRequest(new Request(`${url}/ghost`), db, track, 'ghost');
+  await timeTrialRequest(new Request(url, {
+    method: 'POST',
+    body: JSON.stringify({ ...runLap(track), name: 'Driver', driverId: uuid }),
+  }), db, track);
+  assert.deepEqual(bindings.map(([key]) => key), Array(4).fill(`${track}-v2`));
 });
 
 test('rejects a lap and a single sample that exceed the boosted distance limit', () => {

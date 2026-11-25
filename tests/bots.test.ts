@@ -150,6 +150,33 @@ test('all difficulties finish every track, with Hard recording the quickest lap 
   }
 });
 
+test('higher difficulty bots commit to more off-line boost pads', () => {
+  const pad = { s: .5, lane: 3 };
+  const track = {
+    ...RED_BASIN,
+    pads: [pad],
+    frame: (s: number) => ({ ...RED_BASIN.frame(s), x: 0, z: s * RED_BASIN.length, heading: 0 }),
+    point: (s: number, lane = 0, height = 0) => RED_BASIN.point(0).set(lane, height, s * RED_BASIN.length),
+    gradeAt: () => 0,
+  };
+  const pickups = DIFFICULTIES.map(difficulty => {
+    const pilot = new BotPilot(track, 0, difficulty);
+    let hits = 0;
+    for (let lap = 0; lap < LAPS; lap++) {
+      const center = lap + pad.s;
+      const kart = { ...grid(0, track), s: center - 30 / track.length, speed: 32 };
+      for (let frame = 0; kart.s < center + 4 / track.length && frame < 180; frame++) {
+        drive(kart, pilot.input(kart, (lap * 180 + frame) * dt * 1000, []), dt, track);
+      }
+      assert.ok(kart.s >= center + 4 / track.length);
+      if (kart.boost > 0) hits++;
+    }
+    return hits;
+  });
+  assert.equal(pickups[2], LAPS);
+  assert.ok(pickups[0] < pickups[1] && pickups[1] < pickups[2], String(pickups));
+});
+
 test('a Hard bot earns corner drift boosts without any boost pads', () => {
   const track = { ...RED_BASIN, pads: [] };
   const race = new LocalRace(2, 0, track, undefined, 'Hard');

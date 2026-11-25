@@ -1,5 +1,5 @@
 import { COLORS, LAPS, LIMIT, RED_BASIN, clamp, delta, getTrack, mix, wrap, type Circuit } from './circuit';
-import { bump, drive, grid, pose, substep, type Input, type Kart } from './drive';
+import { bump, drive, grid, PAD_LENGTH, pose, substep, type Input, type Kart } from './drive';
 import { cupTrack, scoreRound, type Cup } from './cups';
 import { advance, driver, rank, type Driver, type RoomState } from './rules';
 import { type ItemBox, type LocalItemRacer, type PowerupCallbacks, type PowerupId, type PowerupState } from './powerups';
@@ -9,7 +9,7 @@ export const DIFFICULTIES = ['Easy', 'Normal', 'Hard'] as const;
 export type Difficulty = typeof DIFFICULTIES[number];
 const tuning = {
   Easy: { pace: 32, line: .53, error: 1.25, reaction: .42, drift: .70, pads: .1, boxes: 1.2 },
-  Normal: { pace: 38, line: .83, error: .65, reaction: .21, drift: .52, pads: .57, boxes: 2.3 },
+  Normal: { pace: 38, line: .83, error: .65, reaction: .21, drift: .52, pads: .75, boxes: 2.3 },
   Hard: { pace: 42.5, line: 1, error: .23, reaction: .10, drift: .40, pads: 1, boxes: 3.6 },
 } satisfies Record<Difficulty, Record<string, number>>;
 const names = ['Comet', 'Dusty', 'Nitro', 'Swerve', 'Blaze', 'Dash', 'Drift'];
@@ -88,6 +88,19 @@ export class BotPilot {
     const offset = lane - rival.lane;
     return rival.speed < 2 && kart.speed < 5.5 && Math.abs(offset) >= CREEP_CLEARANCE
       && (kart.lane - rival.lane) * offset >= 0;
+  }
+
+  private boostTarget(s: number) {
+    let target: { lane: number; distance: number } | undefined;
+    for (const [i, pad] of this.track.pads.entries()) {
+      const lap = Math.round(s - pad.s);
+      const distance = (lap + pad.s - s) * this.track.length;
+      if (distance < -PAD_LENGTH / 2 || distance > 26 || distance >= (target?.distance ?? Infinity)) continue;
+      const seed = (lap + 1) * 31 + (this.slot + 1) * 17 + i;
+      const roll = (Math.imul(seed, 0x9e3779b9) >>> 0) / 0x100000000;
+      if (roll < this.skill.pads) target = { lane: pad.lane, distance };
+    }
+    return target;
   }
 
   private position(kart: Kart, time: number, target: number, pace: number, rivals: Rival[]) {
@@ -184,13 +197,8 @@ export class BotPilot {
     const next = lineAt(line, look + 16 / track.length);
     const severity = clamp(Math.max(Math.abs(here.bend), Math.abs(next.bend) * .85), 0, 1.5);
     let lineTarget = here.lane * skill.line + (slot - 3) * .24 + skill.error * Math.sin(kart.s * 12 * Math.PI + phase);
-    for (const pad of track.pads) {
-      const distance = delta(pad.s - kart.s) * track.length;
-      if (distance < -4 || distance > 26) continue;
-      const weight = clamp((26 - distance) / 20, 0, 1) * clamp((distance + 4) / 4, 0, 1);
-      lineTarget = mix(lineTarget, pad.lane, weight * skill.pads);
-      break;
-    }
+    const pad = this.boostTarget(kart.s);
+    if (pad) lineTarget = mix(lineTarget, pad.lane, clamp((26 - pad.distance) / 12, 0, 1));
     const mistake = Math.max(0, Math.sin(time * .91 + phase) - .86) * skill.error * 30;
     const desiredPace = skill.pace - slot * .21 - severity * (this.difficulty === 'Hard' ? 2.8 : 4.6) - mistake;
     const rivals = this.traffic(kart, racers);
@@ -205,7 +213,7 @@ export class BotPilot {
     let steer = clamp(error * 3, -1, 1);
     const direction = Math.sign(here.bend);
     const space = safeLane - kart.lane * direction;
-    const startingDrift = boxLane === undefined && !this.maneuver && !following && time >= this.driftReady && kart.boost === 0 && kart.speed >= 28
+    const startingDrift = !pad && boxLane === undefined && !this.maneuver && !following && time >= this.driftReady && kart.boost === 0 && kart.speed >= 28
       && Math.abs(here.bend) >= skill.drift && steer * direction > .29 && space > 4.1;
     if (startingDrift) {
       this.driftSign = direction;

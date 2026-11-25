@@ -15,7 +15,7 @@ import { rank, type Driver, type RoomState, type ServerMessage } from './rules';
 import { View, type Actor } from './scene';
 import { TimeTrial } from './time-trial';
 import { drawTrackMap, trackSelector, trackTag } from './track-ui';
-import { DEFAULT_TRACK, isTrackId, type TrackId } from './tracks';
+import { courseLayoutKey, DEFAULT_TRACK, isTrackId, type TrackId } from './tracks';
 import { formatTime, RaceTiming } from './timing';
 import { RaceWakeLock } from './wake';
 
@@ -207,8 +207,8 @@ function menu() {
   }
 }
 
-function trialKey(id: TrackId) { return `tilt-kart-trial-best-${id}`; }
-function trialUrl(id: TrackId) { return `/api/tt/${id}`; }
+function trialKey(id: TrackId) { return `tilt-kart-trial-best-${courseLayoutKey(id)}`; }
+function trialUrl(id: TrackId) { return `/api/tt/${courseLayoutKey(id)}`; }
 
 function lapGhost(replay: Replay | null): LapGhost | undefined {
   if (!replay || typeof replay.ghost !== 'string') return;

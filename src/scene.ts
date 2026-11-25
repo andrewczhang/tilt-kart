@@ -1,11 +1,12 @@
 import * as T from 'three';
 import { Atmosphere } from './atmosphere';
-import { COLORS, RED_BASIN, SAMPLES, type Circuit } from './circuit';
+import { COLORS, RED_BASIN, SAMPLES, inSection, type Circuit } from './circuit';
 import { PAD_LENGTH, PAD_WIDTH, type Pose } from './drive';
 import type { PowerupState } from './powerups';
 import { PowerupScene } from './powerups-scene';
 import { KartEffects } from './effects';
 import { themedScenery } from './track-art';
+import { landmarks } from './track-landmarks';
 import { TRACK_IDS } from './tracks';
 
 const flat = (color: T.ColorRepresentation) => new T.MeshLambertMaterial({ color, flatShading: true });
@@ -24,15 +25,18 @@ function block(parent: T.Object3D, material: T.Material, x: number, y: number, z
   return mesh;
 }
 
-type Strip = [(s: number) => T.Vector3, (s: number) => T.Vector3, T.ColorRepresentation | ((i: number) => T.ColorRepresentation)];
-function strips(defs: Strip[], segments = SAMPLES, start = 0, end = 1) {
+type Strip = [(s: number) => T.Vector3, (s: number) => T.Vector3,
+  T.ColorRepresentation | ((i: number, s: number) => T.ColorRepresentation), ((s: number) => boolean)?];
+function strips(defs: Strip[], segments = SAMPLES, start = 0, end = 1, cuts: number[] = []) {
   const vertices: number[] = [], colors: number[] = [];
   const c = new T.Color();
-  for (const [a, b, color] of defs) {
-    for (let i = 0; i < segments; i++) {
-      const s = start + (end - start) * i / segments, e = start + (end - start) * (i + 1) / segments;
+  const samples = Array.from(new Set([...Array.from({ length: segments + 1 }, (_, i) => start + (end - start) * i / segments), ...cuts])).sort((a, b) => a - b);
+  for (const [a, b, color, include] of defs) {
+    for (let i = 0; i < samples.length - 1; i++) {
+      const s = samples[i], e = samples[i + 1], mid = (s + e) / 2;
+      if (include && !include(mid)) continue;
       const a0 = a(s), a1 = a(e), b0 = b(s), b1 = b(e);
-      c.set(typeof color === 'function' ? color(i) : color);
+      c.set(typeof color === 'function' ? color(i, mid) : color);
       for (const v of [a0, a1, b0, b0, a1, b1]) {
         vertices.push(v.x, v.y, v.z);
         colors.push(c.r, c.g, c.b);
@@ -50,28 +54,56 @@ function circuit(scene: T.Group, track: Circuit) {
   const { frame, point } = track;
   const edge = track.width / 2;
   const at = (lane: number, h = 0) => (s: number) => point(s, lane, h);
-  const skirt = (lane: number) => track.id === 'red-basin' ? (s: number) => point(s, lane).setY(-2) : at(lane, -.60);
-  scene.add(strips([
-    [at(-edge), at(edge), track.road],
-    [skirt(-edge), at(-edge), track.id === 'red-basin' ? '#614438' : track.wall],
-    [at(edge), skirt(edge), track.id === 'red-basin' ? '#614438' : track.wall],
+  const road = (side: number, inset = 0, h = 0) => (s: number) => point(s, side * (track.widthAt(s) / 2 + inset), h);
+  const grounded = (s: number) => !track.gapAt(s);
+  const sections = [...(track.jumps ?? []), ...(track.surfaces ?? []), ...(track.branch ? [track.branch] : [])];
+  const cuts = sections.flatMap(({start, end}) => [start, end]);
+  const surfaceColor = (s: number, edge: boolean) => track.surfaces?.find(zone => inSection(s, zone) && (!zone.edge || edge))?.color ?? track.road;
+  const defs: Strip[] = [
+    [road(-1, 0, -.60), road(1, 0, -.60), track.wall, grounded],
+    [road(-1, 0, -.60), road(-1), track.wall, grounded],
+    [road(1), road(1, 0, -.60), track.wall, grounded],
+    [road(-1, -track.width * .19), road(1, -track.width * .19), (_, s) => surfaceColor(s, false), grounded],
+    [road(-1), road(-1, -track.width * .19), (_, s) => surfaceColor(s, true), grounded],
+    [road(1, -track.width * .19), road(1), (_, s) => surfaceColor(s, true), grounded],
     ...[-1, 1].flatMap((sign): Strip[] => {
-      const lane = sign * edge, outside = sign * (edge + .32);
+      const barrier = (s: number) => {
+        const b = track.branchAt(s);
+        return grounded(s) && !(b?.side === sign && Math.abs(b.center) - b.width / 2 < track.widthAt(s) / 2 + .65);
+      };
       return [
-        [at(lane - sign * .73, .022), at(lane, .022), i => (i >> 1) % 2 ? track.trim : track.curb],
-        [at(lane, 1.02), at(outside, 1.02), track.trim],
-        [at(lane, .25), at(lane, 1.02), i => (i >> 3) % 2 ? track.curb : track.trim],
-        [at(outside, 1.02), at(outside, 0), track.wall],
-        [at(lane, .03), at(lane, .25), '#30333d']
+        [road(sign, -.73, .022), road(sign, 0, .022), i => (i >> 1) % 2 ? track.trim : track.curb, barrier],
+        [road(sign, 0, 1.02), road(sign, .32, 1.02), track.trim, barrier],
+        [road(sign, 0, .25), road(sign, 0, 1.02), i => (i >> 3) % 2 ? track.curb : track.trim, barrier],
+        [road(sign, .32, 1.02), road(sign, .32), track.wall, barrier],
+        [road(sign, 0, .03), road(sign, 0, .25), '#30333d', barrier]
       ];
     })
-  ]));
+  ];
+  if (track.branch) {
+    const { side, color } = track.branch;
+    const branchEdge = (outer: boolean, h = 0) => (s: number) => {
+      const b = track.branchAt(s), edge = track.widthAt(s) / 2;
+      return point(s, side * (b ? Math.max(edge, Math.abs(b.center) + (outer ? 1 : -1) * b.width / 2) : edge), h);
+    };
+    const branch = (s: number) => Boolean(track.branchAt(s));
+    const spurRail = (s: number) => {
+      const b = track.branchAt(s);
+      return Boolean(b && Math.abs(b.center) + b.width / 2 > track.widthAt(s) / 2 + .45);
+    };
+    defs.push([branchEdge(false), branchEdge(true), color, branch],
+      [branchEdge(true, -.6), branchEdge(true), track.wall, branch],
+      [branchEdge(false, -.6), branchEdge(false), track.wall, branch],
+      [branchEdge(true, .04), branchEdge(true, .75), (_, s) => Math.floor(s * 175) % 2 ? track.trim : track.wall, spurRail]);
+  }
+  scene.add(strips(defs, SAMPLES, 0, 1, cuts));
   const line: Strip[] = Array.from({ length: 16 }, (_, i) => [at(-edge + i * track.width / 16, .032), at(-edge + (i + 1) * track.width / 16, .032), row => (row + i) % 2 ? '#242b32' : track.trim]);
   scene.add(strips(line, 2, -.0014, .0014));
-  const marks = new T.InstancedMesh(box, white, 115);
+  const stripeStations = Array.from({length: 145}, (_, i) => (i + .5) / 145).filter(grounded);
+  const marks = new T.InstancedMesh(box, white, stripeStations.length);
   const o = new T.Object3D();
   for (let i = 0; i < marks.count; i++) {
-    const s = (i + .5) / marks.count, f = frame(s);
+    const s = stripeStations[i], f = frame(s);
     o.position.copy(point(s, 0, .014));
     o.rotation.set(0, f.heading, -f.bank);
     o.scale.set(.095, .024, 1.1);
@@ -112,61 +144,6 @@ function circuit(scene: T.Group, track: Circuit) {
   const sign = new T.Mesh(new T.PlaneGeometry(track.width + .5, 1.72), new T.MeshBasicMaterial({ map: tex, side: T.DoubleSide }));
   sign.position.set(0, beamHeight, -.46); sign.rotation.y = Math.PI; arch.add(sign);
   scene.add(arch);
-}
-
-function scenery(scene: T.Group, track: Circuit) {
-  const { frame, point } = track;
-  const ground = new T.Mesh(new T.PlaneGeometry(2600, 2600), flat('#c98457'));
-  ground.rotation.x = -Math.PI / 2; ground.position.y = -1.2; scene.add(ground);
-  let seed = 47063;
-  const rand = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
-  const o = new T.Object3D();
-  const rocks = new T.InstancedMesh(new T.DodecahedronGeometry(1, 0), flat('#fff'), 230);
-  const vistas = new T.InstancedMesh(new T.CylinderGeometry(.56, 1, 1, 6), flat('#fff'), 75);
-  const cacti = new T.InstancedMesh(new T.CylinderGeometry(.77, 1, 1, 6), flat('#649477'), 126);
-  const rail = new T.InstancedMesh(box, flat('#424455'), 34);
-  const mat = (mesh: T.InstancedMesh, i: number, color?: string) => {
-    o.updateMatrix();
-    mesh.setMatrixAt(i, o.matrix);
-    if (color) mesh.setColorAt(i, new T.Color(color));
-  };
-  const clear = (x: number, z: number, r: number) => {
-    for (let i = 0; i < 144; i++) {
-      const f = frame(i / 144);
-      if (Math.hypot(f.x - x, f.z - z) < r) return false;
-    }
-    return true;
-  };
-  for (let i = 0; i < rocks.count; i++) {
-    let x: number, z: number;
-    do { x = (rand() - .5) * 500; z = (rand() - .5) * 460; } while (!clear(x, z, 19));
-    const size = .7 + rand() ** 3 * 14;
-    o.position.set(x, size * .27 - 1.2, z); o.scale.set(size, size * (.35 + rand() * .6), size * .86); o.rotation.set(rand() * .3, rand() * 7, rand() * .4);
-    mat(rocks, i, ['#a64c35', '#d59664', '#deaa72', '#985e4e'][i % 4]);
-  }
-  for (let i = 0; i < vistas.count; i += 3) {
-    const a = rand() * 6.28, r = 220 + rand() * 280, x = Math.sin(a) * r, z = Math.cos(a) * r;
-    const w = 10 + rand() * 35, h = 13 + rand() * 34;
-    for (let j = 0; j < 3; j++) {
-      o.position.set(x, h * (.24 + j * .32), z); o.scale.set(w * (1 - j * .23), h * (j === 2 ? .44 : .57), w * .68 * (1 - j * .22)); o.rotation.set(0, a, 0);
-      mat(vistas, i + j, ['#965640', '#b6694a', '#985340'][j]);
-    }
-  }
-  for (let i = 0; i < cacti.count; i += 3) {
-    let x: number, z: number;
-    do { x = (rand() - .5) * 280; z = (rand() - .5) * 270; } while (!clear(x, z, 13));
-    const h = 2.1 + rand() * 3.8;
-    o.position.set(x, h / 2 - 1.2, z); o.scale.set(.35, h, .35); o.rotation.set(0, 0, 0); mat(cacti, i);
-    for (const side of [-1, 1]) {
-      o.position.set(x + side * .58, h * .55 - 1.2, z + side * .19); o.scale.set(.23, h * .42, .23); o.rotation.z = -.53 * side; mat(cacti, i + (side === 1 ? 2 : 1));
-    }
-  }
-  for (let i = 0; i < rail.count; i++) {
-    const s = .04 + i * .0019;
-    o.position.copy(point(s, 11.4, 1.4 + (i % 2) * .3));
-    o.scale.set(3.2, 2.5 + (i % 2) * .8, 1.8); o.rotation.set(0, frame(s).heading, 0); mat(rail, i, i % 3 ? '#e3c393' : '#ee6745');
-  }
-  scene.add(rocks, vistas, cacti, rail);
 }
 
 function kart(color: string, ghostColor?: string) {
@@ -251,8 +228,8 @@ export class View {
     const sun = new T.DirectionalLight(track.sun, night ? 1.15 : 2.3);
     sun.position.set(-65, 90, -45); this.world.add(sun);
     circuit(this.world, track);
-    if (track.id === 'red-basin') scenery(this.world, track);
-    else themedScenery(this.world, track);
+    themedScenery(this.world, track);
+    landmarks(this.world, track);
     this.atmosphere = new Atmosphere(this.world, this.scene, track);
     this.effects.setTrack(track, this.atmosphere.mood);
     this.scene.add(this.world);
@@ -276,10 +253,13 @@ export class View {
       if (!model) {
         model = kart(COLORS[actor.slot], actor.ghostColor); this.models.set(actor.id, model); this.scene.add(model.root);
       }
-      const [s, lane, yaw, , , boost] = actor.pose;
+      const [s, lane, yaw, speed, , boost] = actor.pose;
       const f = frame(s);
-      model.root.position.copy(point(s, lane, .016));
-      model.root.rotation.set(0, f.heading, Math.atan(f.bank), 'YXZ');
+      const air = this.track.airHeight(s);
+      const roll = point(s, lane + .4).y - point(s, lane - .4).y;
+      model.root.position.copy(point(s, lane, .016 + air + this.track.rumbleAt(s) * speed * .002));
+      model.root.rotation.set(-Math.atan(this.track.gradeAt(s)) * .62, f.heading, Math.atan(roll / .8), 'YXZ');
+      model.under.visible = !this.track.gapAt(s);
       model.body.rotation.y = yaw;
       model.flame.visible = !model.ghost && boost > 0;
       model.flame.scale.z = .63 + Math.sin(performance.now() * .1) * .19;
@@ -307,8 +287,14 @@ export class View {
     } else {
       const targetDistance = 10.5 + speed * .055 + (boost > 0 ? 1.1 : 0);
       this.followDistance += (targetDistance - this.followDistance) * (this.resetCamera ? 1 : 1 - Math.exp(-dt * 8));
-      const eye = point(s - this.followDistance / this.track.length, lane * .75, 6.1);
-      const focus = point(s, lane, .7);
+      const backS = s - this.followDistance / this.track.length;
+      const branch = this.track.branchAt(s);
+      const onBranch = branch && lane * branch.side > this.track.widthAt(s) / 2;
+      const backLane = onBranch ? this.track.branchAt(backS)?.center ?? lane * .6 : lane * .75;
+      const air = this.track.airHeight(s);
+      const eye = point(backS, backLane, 6.1 + air);
+      if (onBranch) eye.y = Math.max(eye.y, point(s, lane, 5).y);
+      const focus = point(s, lane, .7 + air);
       const ahead = new T.Vector3(focus.x - eye.x, 0, focus.z - eye.z).normalize();
       focus.addScaledVector(ahead, 3.8);
       this.camera.position.copy(eye);
