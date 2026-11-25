@@ -21,7 +21,7 @@ import { RaceWakeLock } from './wake';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const ui = $('interface');
-const touch = new Controls(updateTilt, () => screen === 'race' && !$<HTMLDialogElement>('exit-dialog')?.open);
+const touch = new Controls(() => screen === 'race' && !$<HTMLDialogElement>('exit-dialog')?.open);
 const motor = new Motor();
 const music = new RaceMusic(() => motor.start(), motor.muted);
 const wake = new RaceWakeLock();
@@ -37,7 +37,7 @@ let timingKey = '';
 type Trial = { race: TimeTrial; name: string; personal?: LapGhost; world?: LapGhost };
 let trial: Trial | undefined;
 let trialDriverId: string | undefined;
-let issue = '', starting = false, joining = false;
+let issue = '', joining = false;
 let followed = '', checkedDeadline: number | null = null;
 let view: View;
 let practiceTrack: TrackId = DEFAULT_TRACK;
@@ -51,31 +51,20 @@ const button = (id: string, label: string, alt = false) => `<button id="${id}" c
 const doOn = (id: string, fn: () => void) => { $(id).onclick = fn; };
 const identity = '<p class="identity">Tilt Kart</p>';
 const tokenKey = () => `tilt-kart-room-${code}`;
-const notes = () => touch.touch ? 'Rotate to landscape. Hold your phone like a wheel. Automatic throttle. Tap the item box for power-ups.' : 'Drive with WASD or arrow keys. Brake with S, ↓ or Space. Hold brake and turn to drift; press E or Enter for power-ups.';
-const phoneSetup = () => touch.touch ? `<div class="phone-setup">
-  <p class="rotate">Turn sideways for a wider view.</p>
-  ${button('tilt', 'Enable tilt', true)}<p id="tilt-status" role="status">Tilt or use Left / Right to steer.</p>
-  </div>` : '';
-
-function bindTilt() {
-  if (!$('tilt')) return;
-  doOn('tilt', () => {
-    if (screen === 'race') $('tilt').blur();
-    void touch.enableTilt();
-  });
-  updateTilt();
-}
+const phoneNotes = 'Hold Left or Right to steer. The kart accelerates automatically. Hold Brake / Drift while steering to drift.';
+const itemNote = 'Tap the item box for power-ups.';
+const notes = () => touch.touch ? `Turn sideways for a wider view. ${phoneNotes} ${itemNote}` : 'Drive with WASD or arrow keys. Brake with S, ↓ or Space. Hold brake and turn to drift; press E or Enter for power-ups.';
+const phoneHelp = (items = true) => touch.touch ? `<p class="help rotate">Turn sideways for a wider view.</p>
+  <p class="help">${phoneNotes}${items ? ` ${itemNote}` : ''}</p>` : '';
 
 function prepareLocal(racers: number, back: () => void, cup?: Cup, difficulty?: Difficulty) {
   motor.start();
   if (!touch.touch) { startLocal(racers, cup, difficulty); return; }
   screen = 'controls';
   show(`<section class="poster compact">${identity}<h2 class="title">Phone controls</h2>
-    ${phoneSetup()}
-    <p class="help">Hold your phone like a wheel. The kart accelerates automatically.</p>
+    ${phoneHelp()}
     <div class="actions">${button('start', cup ? 'Start cup' : 'Start race')}${button('back', 'Back', true)}</div>
     </section>${trackTag(track)}`);
-  bindTilt();
   doOn('start', () => { motor.start(); startLocal(racers, cup, difficulty); });
   doOn('back', back);
 }
@@ -158,21 +147,19 @@ function menu() {
     show(`<section class="poster compact">${identity}<h2 class="title">${rejoining ? 'Rejoin room' : code ? 'Join the grid' : 'Set up a race'}</h2>
       <form class="setup" id="setup"><label for="driver">Driver name</label>
       <input id="driver" maxlength="20" autocomplete="nickname" required placeholder="Your name">
-      ${phoneSetup()}
       <div class="actions"><button class="action" id="join" type="submit">${rejoining ? 'Rejoin room' : code ? 'Join room' : 'Create room'}</button>${button('back', 'Back', true)}</div></form>
-      <p class="notice" role="status" id="notice"></p>${touch.touch ? '' : `<p class="help">${notes()}</p>`}</section>${code ? '' : trackTag(track)}`);
+      <p class="notice" role="status" id="notice"></p>${touch.touch ? phoneHelp() : `<p class="help">${notes()}</p>`}</section>${code ? '' : trackTag(track)}`);
     $<HTMLInputElement>('driver').value = readPreference('tilt-kart-name') ?? '';
     $('notice').textContent = issue;
     $<HTMLFormElement>('setup').onsubmit = e => {
       e.preventDefault();
-      if (joining || touch.tiltStatus === 'waiting') return;
+      if (joining) return;
       const name = $<HTMLInputElement>('driver').value.trim();
       if (!name) { $('notice').textContent = 'Enter a name first.'; return; }
       motor.start();
       void connect(name);
     };
     doOn('back', home);
-    bindTilt();
     return;
   }
   if (screen === 'lobby' && room) {
@@ -184,9 +171,8 @@ function menu() {
       <div id="room-code">Room ${code} · ${room.drivers.length}/8 drivers</div><ol class="list" id="roster"></ol>
       ${isHost ? `<div class="track-picker cup-picker">${cupSelector(cup?.id, true)}</div>` : ''}
       ${cup ? `${isHost ? '' : `<p class="lobby-track"><strong>${CUPS[cup.id].name}</strong></p>`}${cupItinerary(cup.id)}` : isHost ? trackSelector(track.id) : `<p class="lobby-track">Track: <strong>${track.name}</strong></p>`}
-      ${phoneSetup()}
       <div class="actions">${button('share', 'Invite friends', true)}${isHost ? button('start', cup ? 'Start cup' : 'Start race') : ''}${button('leave', 'Leave', true)}</div>
-      <p class="notice" id="notice" role="status"></p></section>${trackTag(track)}`);
+      <p class="notice" id="notice" role="status"></p>${phoneHelp()}</section>${trackTag(track)}`);
     if (isHost) {
       const picker = selectById('cup-select')!;
       picker.onchange = () => { if (socket?.readyState === WebSocket.OPEN) socket.send(`cup:${picker.value}`); };
@@ -197,9 +183,7 @@ function menu() {
     fillList($('roster'), [...room.drivers].sort((a, b) => a.slot - b.slot), d => d.id === room?.host ? 'Host' : '');
     doOn('leave', home);
     doOn('share', () => void share());
-    bindTilt();
     if (isHost) doOn('start', () => {
-      touch.calibrate();
       motor.start();
       socket?.send('start');
     });
@@ -231,8 +215,8 @@ function showTimeTrials() {
     <form class="setup" id="trial-setup">${trackSelector(practiceTrack)}
     <label for="trial-driver">Public driver name</label>
     <input id="trial-driver" maxlength="20" autocomplete="nickname" required placeholder="Your name">
-    ${phoneSetup()}
     <div class="actions"><button class="action" id="start" type="submit">Start lap</button>${button('back', 'Back', true)}</div></form>
+    ${phoneHelp(false)}
     <p class="trial-best" id="personal-best"></p>
     <section aria-labelledby="board-title"><h3 class="board-title" id="board-title">World leaderboard</h3>
     <ol class="list" id="standings"></ol><p id="board-message" role="status"></p></section>
@@ -275,14 +259,12 @@ function showTimeTrials() {
   });
   $<HTMLFormElement>('trial-setup').onsubmit = e => {
     e.preventDefault();
-    if (touch.tiltStatus === 'waiting') return;
     const name = input.value.trim();
     if (!name) { input.value = ''; input.reportValidity(); return; }
     writePreference('tilt-kart-name', name);
     motor.start();
     startTrial(name);
   };
-  bindTilt();
   doOn('back', home);
   void loadBoard(practiceTrack);
 }
@@ -447,25 +429,6 @@ function startTrial(name: string) {
   }).catch(() => {});
 }
 
-function updateTilt() {
-  const tilt = $<HTMLButtonElement>('tilt');
-  if (!tilt) return;
-  const status = touch.tiltStatus;
-  tilt.textContent = status === 'ready' ? 'Recenter tilt' : 'Enable tilt';
-  tilt.disabled = status === 'waiting';
-  set('tilt-status', {
-    idle: screen === 'race' ? '' : 'Tilt or use Left / Right to steer.',
-    waiting: 'Waiting for motion data…',
-    denied: 'Motion access denied. Use Left / Right to steer.',
-    unavailable: 'No motion data. Use Left / Right to steer.',
-    ready: screen === 'race' ? '' : 'Tilt ready. Left / Right still work.',
-  }[status]);
-  const start = $<HTMLButtonElement>('start');
-  const join = $<HTMLButtonElement>('join');
-  if (start) start.disabled = status === 'waiting';
-  if (join) join.disabled = joining || status === 'waiting';
-}
-
 function resetRace(me?: Driver) {
   displayTrack(room?.track ?? DEFAULT_TRACK);
   local = localRace?.kart ?? grid(me?.slot ?? 0, track);
@@ -478,7 +441,6 @@ function resetRace(me?: Driver) {
     timingKey = key;
   }
   sent = 0;
-  starting = true;
   followed = '';
   remotes.clear();
   remoteSamples.clear();
@@ -503,7 +465,6 @@ function begin() {
   if (trial) {
     displayTrack(trial.race.track.id);
     local = trial.race.kart;
-    starting = true;
   } else resetRace(room!.drivers.find(d => d.id === player));
   const cup = room?.cup;
   music.start(track.id);
@@ -517,9 +478,8 @@ function begin() {
       <button class="hud-box item-slot" id="item-slot" type="button" aria-label="Use power-up"><small id="item-hint">Item</small><span id="item-icon" class="item-icon">?</span><b id="item-name">Empty</b></button>`}
       <canvas id="map" class="map" width="160" height="130" aria-label="${track.name} circuit map"></canvas>
     </div>
-    <div class="hud-actions"><button class="tool" id="tilt"${touch.touch ? '' : ' hidden'}>Enable tilt</button><button class="tool" id="music"></button><button class="tool" id="sound"></button><button class="tool" id="exit">Exit</button></div>
+    <div class="hud-actions"><button class="tool" id="music"></button><button class="tool" id="sound"></button><button class="tool" id="exit">Exit</button></div>
     <div class="status" id="status" role="status"></div>${trial ? '' : '<div class="item-banner" id="item-banner" role="status"></div>'}
-    ${touch.touch ? '<p class="race-tilt-status" id="tilt-status" role="status"></p>' : ''}
     <div class="boost" aria-label="Drift boost"><i id="boost"></i></div>
     <div class="touch"${touch.touch ? '' : ' hidden'}><button id="left">Left</button><button id="right">Right</button><button id="brake">Brake / Drift</button></div>
     <dialog id="exit-dialog" aria-labelledby="exit-title">
@@ -527,8 +487,6 @@ function begin() {
       <div class="actions"><button class="action alt" id="keep-racing" autofocus>Keep racing</button>${button('confirm-exit', 'Exit race')}</div>
     </dialog>`);
   touch.bindTouch();
-  touch.calibrate();
-  bindTilt();
   const itemBtn = $('item-slot');
   itemBtn?.addEventListener('pointerdown', e => {
     e.preventDefault();
@@ -711,7 +669,6 @@ function tickTrial(attempt: Trial, now: number, dt: number) {
   const { race, name, personal, world } = attempt;
   if (screen === 'race') {
     touch.consumeItem();
-    if (starting && now >= race.start) { starting = false; touch.calibrate(); }
     race.step(touch.input(), now);
     if (race.finished) trialResults(attempt);
   }
@@ -769,7 +726,6 @@ function tick(now: number) {
     const canDrive = screen === 'race' && me?.finish === null && !room.complete && local.s < LAPS;
     const active = canDrive && elapsed >= 0 && elapsed < LIMIT;
     const localItemsActive = localRace && elapsed >= 0 && !room.complete;
-    if (active && starting) { starting = false; touch.calibrate(); }
     const before = local.s;
     const beforeLane = local.lane;
     const frameRaceDt = clamp((Math.min(elapsed, LIMIT) - Math.max(0, elapsed - dt * 1000)) / 1000, 0, dt);
