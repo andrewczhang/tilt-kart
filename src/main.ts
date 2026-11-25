@@ -1,7 +1,7 @@
 import './style.css';
 import { Motor } from './audio';
 import { LocalRace, MAX_RACERS } from './bots';
-import { COLORS, COUNTDOWN, LAPS, clamp, point } from './circuit';
+import { COLORS, COUNTDOWN, LAPS, LIMIT, clamp, point } from './circuit';
 import { Controls } from './controls';
 import { drive, grid, pose, type Kart, type Pose } from './drive';
 import { RaceMusic } from './music';
@@ -16,12 +16,13 @@ const motor = new Motor();
 const music = new RaceMusic(() => motor.start(), motor.muted);
 const route = /^\/r\/([0-9a-z]{8})\/?$/i.exec(location.pathname);
 let code = route?.[1].toUpperCase() ?? '';
-let screen: 'home' | 'bots' | 'join' | 'lobby' | 'race' | 'results' = code ? 'join' : 'home';
+let screen: 'home' | 'bots' | 'join' | 'lobby' | 'race' | 'spectate' | 'results' = code ? 'join' : 'home';
 let socket: WebSocket | undefined;
 let heartbeat = 0, clock = 0, sent = 0;
 let player = '', local = grid(0), room: RoomState | undefined;
 let localRace: LocalRace | undefined;
 let issue = '', starting = false, joining = false;
+let followed = '', checkedDeadline: number | null = null;
 let view: View;
 const remotes = new Map<string, Pose>();
 const preview = driver('preview', '', 0);
@@ -36,6 +37,7 @@ const doAfterGesture = () => {
   if (touch.touch) void touch.enableTilt();
 };
 const notes = () => touch.touch ? 'Rotate to landscape. Hold your phone like a wheel. Automatic throttle.' : 'Drive with WASD or arrow keys. Hold brake and turn to drift; release for a boost.';
+const tokenKey = () => `tilt-kart-room-${code}`;
 
 function menu() {
   if (screen === 'home') {
@@ -68,10 +70,11 @@ function menu() {
     return;
   }
   if (screen === 'join') {
-    show(`<section class="poster compact">${identity}<h2 class="title">${code ? 'Join the grid' : 'Set up a race'}</h2>
+    const rejoining = code && readPreference(tokenKey());
+    show(`<section class="poster compact">${identity}<h2 class="title">${rejoining ? 'Rejoin room' : code ? 'Join the grid' : 'Set up a race'}</h2>
       <form class="setup" id="setup"><label for="driver">Driver name</label>
       <input id="driver" maxlength="20" autocomplete="nickname" required placeholder="Your name">
-      <div class="actions"><button class="action" id="join" type="submit">${code ? 'Join room' : 'Create room'}</button>${button('back', 'Back', true)}</div></form>
+      <div class="actions"><button class="action" id="join" type="submit">${rejoining ? 'Rejoin room' : code ? 'Join room' : 'Create room'}</button>${button('back', 'Back', true)}</div></form>
       <p class="notice" role="status" id="notice"></p><p class="help">${notes()}</p></section>${sceneTag}`);
     $<HTMLInputElement>('driver').value = readPreference('tilt-kart-name') ?? '';
     $('notice').textContent = issue;
@@ -169,15 +172,19 @@ async function connect(name: string) {
     const url = new URL(`/api/rooms/${code}`, location.href);
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     url.searchParams.set('name', name);
-    const ws = socket = new WebSocket(url);
+    const key = tokenKey();
+    const token = readPreference(key) ?? crypto.randomUUID();
+    const ws = socket = new WebSocket(url, token);
     ws.onmessage = e => {
       if (socket !== ws || e.data === 'pong') return;
       let message: ServerMessage;
       try { message = JSON.parse(e.data); } catch { return; }
       if (message.type === 'welcome') {
+        writePreference(key, token);
         clock = message.now - Date.now();
         player = message.id; joining = false;
         screen = 'lobby'; issue = '';
+        checkedDeadline = null;
         heartbeat = window.setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) ws.send('ping');
         }, 20_000);
@@ -186,24 +193,19 @@ async function connect(name: string) {
       else if (message.type === 'error') connectionLost(message.reason);
       else if (message.type === 'state') {
         const d = room?.drivers.find(p => p.id === message.id);
-        if (d) Object.assign(d, { pose: message.pose, checkpoint: message.checkpoint, finish: message.finish });
+        if (d) {
+          Object.assign(d, { pose: message.pose, checkpoint: message.checkpoint, finish: message.finish });
+          if (screen === 'results' && message.finish !== null) updateResults();
+        }
       }
     };
-    ws.onclose = () => {
-      if (socket === ws) connectionLost(joining ? 'Could not join room. Check the link and try again.' : 'Connection to the room was lost.');
+    ws.onclose = e => {
+      if (socket === ws) connectionLost(e.reason || (joining ? 'Could not join room. Check the link and try again.' : 'Connection lost. Rejoin to return to your room.'));
     };
   } catch { if (joining) connectionLost('Could not create a room. Please try again.'); }
 }
 
 function connectionLost(reason: string) {
-  if (screen === 'race' && room) {
-    issue = reason;
-    results();
-    socket = undefined;
-    clearInterval(heartbeat);
-    return;
-  }
-  if (screen === 'results') return;
   close();
   issue = reason;
   screen = 'join';
@@ -212,12 +214,18 @@ function connectionLost(reason: string) {
 
 function receiveRoom(next: RoomState) {
   room = next;
-  if (screen === 'lobby') {
-    if (next.start !== null) begin();
-    else menu();
+  const me = next.drivers.find(d => d.id === player);
+  if (next.start === null) {
+    music.stop();
+    screen = 'lobby';
+    menu();
+  } else if (next.complete || me?.finish != null) {
+    if (screen === 'lobby') resetRace(me);
+    results();
+  } else if (screen === 'lobby') {
+    if (me) begin();
+    else spectate();
   }
-  if (next.complete && screen === 'race') results();
-  else if (next.complete && screen === 'results') results();
 }
 
 function startLocal(racers: number) {
@@ -236,14 +244,31 @@ function updateTilt() {
   $('left').hidden = $('right').hidden = enabled;
 }
 
-function begin() {
-  screen = 'race';
-  music.start('red-basin');
-  const me = room!.drivers.find(d => d.id === player)!;
-  local = localRace?.kart ?? grid(me.slot);
+function resetRace(me?: Driver) {
+  local = localRace?.kart ?? grid(me?.slot ?? 0);
+  if (!localRace && me) {
+    [local.s, local.lane, local.yaw, local.speed, local.drift, local.boost] = me.pose;
+  }
   sent = 0;
   starting = true;
+  followed = '';
   remotes.clear();
+}
+
+function spectate() {
+  screen = 'spectate';
+  resetRace();
+  show(`<div class="hud" aria-label="Race overview">
+      <div class="hud-box" role="status"><strong>Spectating</strong><small>You’re on the grid next race.</small></div>
+      <canvas id="map" class="map" width="160" height="130" aria-label="Circuit map"></canvas></div>
+    <div class="hud-actions"><button class="tool" id="exit">Exit</button></div>`);
+  doOn('exit', home);
+}
+
+function begin() {
+  screen = 'race';
+  resetRace(room!.drivers.find(d => d.id === player));
+  music.start('red-basin');
   show(`<div class="hud" aria-label="Race overview">
       <div class="hud-box"><small>Lap</small><em id="lap">1/3</em></div>
       <div class="hud-box"><small>Place</small><em id="place">1/${room!.drivers.length}</em></div>
@@ -286,22 +311,26 @@ function results() {
   music.stop();
   screen = 'results';
   const racers = localRace?.racers;
+  const rematch = !localRace && room?.host === player;
   show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet">${identity}
     <h2 class="title" id="result-title">${racers === 1 ? 'Practice results' : 'Race results'}</h2>
     <ol class="list" id="results-list"></ol><p id="result-status"></p>
-    <div class="actions">${button('back', 'Main menu', true)}${racers ? button('retry', 'Race again') : ''}</div>
+    <div class="actions">${button('back', 'Main menu', true)}${racers ? button('retry', 'Race again') : rematch ? button('retry', 'Rematch') : ''}</div>
     </div></section>`);
   updateResults();
   doOn('back', home);
   if (racers) doOn('retry', () => startLocal(racers));
+  else if (rematch) doOn('retry', () => socket?.send('rematch'));
 }
 
 function updateResults() {
   if (!room) return;
   const list = $('results-list');
   list.replaceChildren();
-  fillList(list, rank(room.drivers), d => d.finish !== null ? formatTime(d.finish) : room?.complete || !d.online || issue ? 'DNF' : 'Racing');
-  $('result-status').textContent = issue || (!room.complete ? 'Waiting for the finish…' : '');
+  fillList(list, rank(room.drivers), d => d.finish !== null ? formatTime(d.finish) : room?.complete ? 'DNF' : d.online ? 'Racing' : 'Disconnected');
+  const retry = $<HTMLButtonElement>('retry');
+  if (!localRace && retry) retry.disabled = !room.complete;
+  $('result-status').textContent = !room.complete ? 'Waiting for the finish…' : !localRace && room.host !== player ? 'Waiting for the host to start a rematch.' : '';
 }
 
 function set(id: string, value: string) {
@@ -327,27 +356,31 @@ let last = performance.now();
 function tick(now: number) {
   const dt = Math.min(.05, (now - last) / 1000);
   last = now;
-  const racing = screen === 'race' || screen === 'results';
+  const racing = screen === 'race' || screen === 'spectate' || screen === 'results';
   if (racing && room?.start != null) {
     const elapsed = Date.now() + clock - room.start;
-    const me = room.drivers.find(d => d.id === player)!;
+    const me = room.drivers.find(d => d.id === player);
     const active = screen === 'race' && elapsed >= 0 && local.s < LAPS;
     if (active && starting) { starting = false; touch.calibrate(); }
     if (localRace) {
       const changed = localRace.step(touch.input(), dt, elapsed);
-      if (screen === 'race' && (me.finish !== null || room.complete)) results();
+      if (screen === 'race' && (me?.finish != null || room.complete)) results();
       else if (screen === 'results' && changed) updateResults();
     } else if (active) {
       drive(local, touch.input(), dt);
     }
     const mine = pose(local);
-    if (!localRace && screen === 'race' && elapsed >= 0 && me.finish === null) {
+    if (!localRace && !room.complete && elapsed >= LIMIT && checkedDeadline !== room.start && socket?.readyState === WebSocket.OPEN) {
+      socket.send('status');
+      checkedDeadline = room.start;
+    }
+    if (!localRace && screen === 'race' && elapsed >= 0 && me?.finish === null) {
       mine[0] = Math.min(mine[0], LAPS);
       if (now - sent >= 55 && socket?.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify(mine)); sent = now;
       }
     }
-    if (!localRace && me.finish !== null && screen === 'race') results();
+    if (!localRace && me?.finish != null && screen === 'race') results();
     const visible = room.drivers.filter(d => d.online).map(d => {
       if (d.id === player) return { ...d, pose: mine };
       if (localRace) return d;
@@ -363,10 +396,12 @@ function tick(now: number) {
       set('place', `${rank(current).findIndex(d => d.id === player) + 1}/${room.drivers.length}`);
       set('status', elapsed < 0 ? String(Math.min(3, Math.ceil(-elapsed / 1000))) : elapsed < 630 ? 'GO!' : '');
       $('boost').style.transform = `scaleX(${local.boost > 0 ? clamp(local.boost / 1.5, 0, 1) : local.drift})`;
-      drawMap(visible);
     }
+    if (screen === 'race' || screen === 'spectate') drawMap(visible);
     motor.update(active || screen === 'race' && elapsed < 0 ? local : undefined);
-    view.render(mine, visible, player, dt);
+    const target = !me ? visible.find(d => d.id === followed && d.finish === null) ?? visible.find(d => d.finish === null) ?? visible[0] : undefined;
+    followed = target?.id ?? '';
+    view.render(target?.pose ?? mine, visible, player, dt);
   } else {
     const demo: Pose = [((now % 68_000) / 68_000 + .964) % 1, 1.5, -.07, 32, 0, 0];
     view.render(demo, [{ ...preview, pose: demo }], preview.id, dt, true);

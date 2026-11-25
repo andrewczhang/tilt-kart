@@ -3,9 +3,11 @@ import { COUNTDOWN, LIMIT } from '../src/circuit';
 import { advance, driver, validPose, type Driver, type RoomState, type ServerMessage } from '../src/rules';
 
 type Env = { ASSETS: Fetcher; ROOMS: DurableObjectNamespace<Room> };
-type Meta = { created: number; host: string; start: number | null; complete: boolean; gone: Driver[] };
-type Attachment = { driver: Driver; last: number };
+type Away = Driver & { token?: string };
+type Meta = { created: number; host: string; start: number | null; complete: boolean; gone: Away[] };
+type Attachment = { driver: Driver; last: number; token?: string; watching?: boolean };
 const CODE = /^[A-Z0-9]{8}$/;
+const TOKEN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const IDLE_LIMIT = 12 * 60 * 60 * 1000;
 
 export default {
@@ -53,27 +55,48 @@ export class Room extends DurableObject<Env> {
     }
     const sockets = this.sockets();
     const meta = this.meta;
+    const protocol = req.headers.get('Sec-WebSocket-Protocol');
+    const token = protocol && TOKEN.test(protocol) ? protocol : undefined;
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);
+    const upgrade = () => new Response(null, { status: 101, webSocket: pair[0], headers: token ? { 'Sec-WebSocket-Protocol': token } : undefined });
     const deny = (reason: string) => {
       this.send(pair[1], { type: 'error', reason });
       pair[1].close(1008, reason);
-      return new Response(null, { status: 101, webSocket: pair[0] });
+      return upgrade();
     };
     if (!meta || Date.now() - meta.created > IDLE_LIMIT) return deny('Room link has expired.');
-    if (meta.start !== null) return deny('That race already started. Create a new room to race again.');
-    if (sockets.length >= 8) return deny('That room is full.');
+    const previous = token ? sockets.find(s => this.data(s)!.token === token) : undefined;
+    const away = token ? meta.gone.findIndex(d => d.token === token) : -1;
     const name = url.searchParams.get('name')?.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 20) || 'Driver';
-    const id = crypto.randomUUID().slice(0, 8);
-    const slots = new Set(sockets.map(s => this.data(s)!.driver.slot));
-    let slot = 0;
-    while (slots.has(slot)) slot++;
-    pair[1].serializeAttachment({ driver: driver(id, name, slot), last: 0 } satisfies Attachment);
-    if (!sockets.length) { meta.host = id; await this.save(); }
+    let data: Attachment;
+    if (previous) {
+      data = this.data(previous)!;
+      previous.serializeAttachment(null);
+      previous.close(4001, 'Rejoined in another tab.');
+    } else if (away >= 0) {
+      const [{ token: resumeToken, ...saved }] = meta.gone.splice(away, 1);
+      data = { driver: { ...saved, online: true }, last: Date.now(), token: resumeToken };
+    } else {
+      if (sockets.length + meta.gone.length >= 8) return deny('That room is full.');
+      const watching = meta.start !== null;
+      const slots = new Set(sockets.map(s => this.data(s)!.driver.slot));
+      let slot = 0;
+      while (slots.has(slot)) slot++;
+      data = { driver: driver(crypto.randomUUID().slice(0, 8), name, watching ? 0 : slot), last: 0, token, watching };
+    }
+    const { id } = data.driver;
+    pair[1].serializeAttachment(data);
+    const hostChanged = !sockets.length && meta.host !== id;
+    if (hostChanged) meta.host = id;
+    const now = Date.now();
+    const completed = this.maybeComplete(meta, now);
+    const saved = hostChanged || away >= 0 || completed ? this.save() : undefined;
     const room = this.snapshot(meta);
-    this.send(pair[1], { type: 'welcome', id, now: Date.now(), room });
+    this.send(pair[1], { type: 'welcome', id, now, room });
     this.broadcast({ type: 'room', room }, pair[1]);
-    return new Response(null, { status: 101, webSocket: pair[0] });
+    await saved;
+    return upgrade();
   }
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer) {
@@ -81,19 +104,37 @@ export class Room extends DurableObject<Env> {
     if (!meta || !data || typeof raw !== 'string' || raw.length > 160) return;
     const now = Date.now();
     if (now - meta.created > IDLE_LIMIT) { ws.close(1008, 'Room link has expired.'); return; }
+    if (raw === 'rematch') {
+      if (data.driver.id !== meta.host || !meta.complete) return;
+      meta.start = null;
+      meta.complete = false;
+      meta.gone = [];
+      const entries = this.sockets().map(s => ({ s, data: this.data(s)! }));
+      const slots = new Set(entries.filter(e => !e.data.watching).map(e => e.data.driver.slot));
+      for (const { s, data } of entries) {
+        let slot = data.driver.slot;
+        if (data.watching) {
+          while (slots.has(slot)) slot++;
+          slots.add(slot);
+        }
+        const { id, name } = data.driver;
+        s.serializeAttachment({ driver: driver(id, name, slot), last: 0, token: data.token } satisfies Attachment);
+      }
+      await this.publish(meta);
+      return;
+    }
     if (raw === 'start') {
       if (data.driver.id !== meta.host || meta.start !== null) return;
       meta.start = now + COUNTDOWN;
-      await this.save();
-      this.broadcast({ type: 'room', room: this.snapshot(meta) });
+      await this.publish(meta);
       return;
     }
     if (meta.start === null || now < meta.start || meta.complete) return;
     if (now - meta.start >= LIMIT) {
-      await this.maybeComplete(meta, now);
+      if (this.maybeComplete(meta, now)) await this.publish(meta);
       return;
     }
-    if (now - data.last < 42 || data.driver.finish !== null) return;
+    if (data.watching || raw === 'status' || now - data.last < 42 || data.driver.finish !== null) return;
     let p: unknown;
     try { p = JSON.parse(raw); } catch { return; }
     if (!validPose(p) || !advance(data.driver, p, now - meta.start, (now - (data.last || meta.start)) / 1000)) return;
@@ -102,7 +143,7 @@ export class Room extends DurableObject<Env> {
     const { id, checkpoint, finish } = data.driver;
     if (finish !== null) this.send(ws, { type: 'state', id, pose: p, checkpoint, finish });
     this.broadcast({ type: 'state', id, pose: p, checkpoint, finish }, ws);
-    if (finish !== null) await this.maybeComplete(meta, now);
+    if (finish !== null && this.maybeComplete(meta, now)) await this.publish(meta);
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string) {
@@ -110,15 +151,13 @@ export class Room extends DurableObject<Env> {
     ws.serializeAttachment(null);
     try { ws.close(code === 1006 ? 1000 : code, reason); } catch {}
     if (!meta || !data) return;
-    if (meta.start !== null) {
-      meta.gone.push({ ...data.driver, online: false });
-      if (await this.maybeComplete(meta, Date.now())) return;
-      await this.save();
-    } else if (meta.host === data.driver.id) {
-      meta.host = this.sockets().map(s => this.data(s)!.driver)[0]?.id ?? '';
-      await this.save();
-    }
-    this.broadcast({ type: 'room', room: this.snapshot(meta) });
+    const wentAway = meta.start !== null && !data.watching;
+    if (wentAway) meta.gone.push({ ...data.driver, token: data.token, online: false });
+    const hostChanged = meta.host === data.driver.id;
+    if (hostChanged) meta.host = this.sockets().map(s => this.data(s)!.driver)[0]?.id ?? '';
+    const completed = this.maybeComplete(meta, Date.now());
+    if (wentAway || hostChanged || completed) await this.publish(meta);
+    else if (!data.watching) this.broadcast({ type: 'room', room: this.snapshot(meta) });
   }
 
   webSocketError(ws: WebSocket) {
@@ -128,10 +167,16 @@ export class Room extends DurableObject<Env> {
   private data(ws: WebSocket) { return ws.deserializeAttachment() as Attachment | null; }
   private sockets() { return this.ctx.getWebSockets().filter(s => this.data(s)); }
   private save() { return this.ctx.storage.put('room', this.meta!); }
+  private publish(meta: Meta) {
+    const saved = this.save();
+    this.broadcast({ type: 'room', room: this.snapshot(meta) });
+    return saved;
+  }
   private snapshot(meta: Meta): RoomState {
     return {
       host: meta.host, start: meta.start, complete: meta.complete,
-      drivers: [...this.sockets().map(s => this.data(s)!.driver), ...meta.gone]
+      drivers: [...this.sockets().map(s => this.data(s)!).filter(d => !d.watching).map(d => d.driver),
+        ...meta.gone.map(({ token: _token, ...d }) => d)]
     };
   }
   private send(ws: WebSocket, msg: ServerMessage) {
@@ -141,13 +186,10 @@ export class Room extends DurableObject<Env> {
     const packet = JSON.stringify(msg);
     for (const s of this.sockets()) if (s !== except) try { s.send(packet); } catch {}
   }
-  private async maybeComplete(meta: Meta, now: number) {
-    if (meta.complete) return false;
-    const room = this.snapshot(meta);
-    if (now - meta.start! < LIMIT && room.drivers.some(d => d.online && d.finish === null)) return false;
+  private maybeComplete(meta: Meta, now: number) {
+    if (meta.start === null || meta.complete) return false;
+    if (now - meta.start < LIMIT && this.snapshot(meta).drivers.some(d => d.finish === null)) return false;
     meta.complete = true;
-    await this.save();
-    this.broadcast({ type: 'room', room: { ...room, complete: true } });
     return true;
   }
 }
