@@ -90,7 +90,8 @@ export function sampleRemote(pose: Pose, receivedAt: number, previous?: RemoteSa
   const from = track.point(previous.pose[0], previous.pose[1]);
   const to = track.point(pose[0], pose[1]);
   const dx = to.x - from.x, dz = to.z - from.z;
-  const scale = Math.min(1 / dt, BOOST_SPEED / Math.hypot(dx, dz));
+  const speedLimit = Math.max(BOOST_SPEED, pose[3], previous.pose[3]);
+  const scale = Math.min(1 / dt, speedLimit / Math.hypot(dx, dz));
   sample.velocity = { x: dx * scale, z: dz * scale };
   return sample;
 }

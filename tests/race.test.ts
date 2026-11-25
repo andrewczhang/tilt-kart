@@ -160,6 +160,15 @@ test('an online drift moving away from the local kart does not apply an impulse'
   assert.equal(local.speed, 32);
 });
 
+test('online contact prediction follows a peer at turbo speed', () => {
+  const leader = Object.assign(grid(1), { s: 3 / LENGTH, lane: 0, speed: 60 });
+  const previous = sampleRemote(pose({ ...leader, s: 0 }), 950);
+  const sample = sampleRemote(pose(leader), 1000, previous);
+  const start = remoteContact(sample, 1000);
+  const ahead = remoteContact(sample, 1100);
+  assert.ok(Math.hypot(ahead.x - start.x, ahead.z - start.z) > 5.8);
+});
+
 test('room judges from the ordered checkpoints and rejects implausible poses', () => {
   const d = driver('a', 'Test', 0);
   assert.ok(validPose(d.pose));
