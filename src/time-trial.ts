@@ -45,7 +45,7 @@ export class TimeTrial {
   }
 
   step(input: Input, now: number) {
-    if (this.finished) return;
+    if (this.finished || now < this.start) return;
     const held = this.lastInput ?? input;
     this.lastInput = input;
     if (now <= this.lastFrame) return;

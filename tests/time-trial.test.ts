@@ -68,6 +68,21 @@ test('a time trial can submit a UUID generated without crypto.randomUUID', () =>
   assert.ok(validSubmission({ ...runLap(), name: 'LAN Driver', driverId }, TRACK_IDS[0]));
 });
 
+test('the opening physics steps use GO controls, not countdown controls', () => {
+  const track = getTrack();
+  const stale = { ...input, steer: 1 };
+  for (const frameAtGo of [false, true]) {
+    const trial = new TimeTrial(track, 0);
+    const expected = new TimeTrial(track, 0);
+    trial.step(stale, trial.start - 16);
+    if (frameAtGo) trial.step(input, trial.start);
+    trial.step(frameAtGo ? stale : input, trial.start + 32);
+    expected.step(input, expected.start + 32);
+    assert.ok(trial.kart.s > 0);
+    assert.deepEqual(trial.kart, expected.kart);
+  }
+});
+
 test('drift release keeps the standard boost speed cap in time trials', () => {
   const track = getTrack();
   const trial = new TimeTrial(track, 0);
