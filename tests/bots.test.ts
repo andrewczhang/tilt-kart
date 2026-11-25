@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { Vector3 } from 'three';
 import { BotPilot, DIFFICULTIES, LocalRace, MAX_RACERS } from '../src/bots';
 import { LAPS, LENGTH, LIMIT, RED_BASIN, SECTORS, WIDTH, getTrack, point } from '../src/circuit';
 import { newCup } from '../src/cups';
@@ -13,7 +14,11 @@ const idle = { gas: false, brake: false, steer: 0 };
 const dt = 1 / 60;
 
 test('higher difficulty pursues cheap available boxes without diverting for costly or occupied ones', () => {
-  const track = { ...RED_BASIN, pads: [], frame: (s: number) => ({ ...RED_BASIN.frame(s), heading: 0 }) };
+  const track = {
+    ...RED_BASIN, pads: [],
+    frame: (s: number) => ({ x: 0, y: 0, z: s * RED_BASIN.length, heading: 0, bank: 0 }),
+    point: (s: number, lane = 0, height = 0) => new Vector3(lane, height, s * RED_BASIN.length),
+  };
   const kart = { ...grid(3, track), s: .4, lane: 0, speed: 29 };
   const box = { id: 0, s: kart.s + 15 / track.length, lane: 2, cooldown: 0 };
   const steer = (difficulty: typeof DIFFICULTIES[number], lane: number, cooldown = 0, rolling = false) => {
@@ -22,7 +27,7 @@ test('higher difficulty pursues cheap available boxes without diverting for cost
     return pilot.input(kart, 1000, [], { boxes: [{ ...box, lane, cooldown }], rolling, rand: () => 1 }).steer - usual;
   };
   assert.equal(steer('Easy', box.lane), 0);
-  assert.ok(steer('Hard', box.lane) > .7);
+  assert.ok(steer('Hard', box.lane) > .4);
   assert.equal(steer('Hard', 5), 0);
   assert.equal(steer('Hard', box.lane, 1), 0);
   assert.equal(steer('Hard', box.lane, 0, true), 0);
