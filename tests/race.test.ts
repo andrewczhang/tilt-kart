@@ -24,6 +24,18 @@ test('holding brake while turning charges a boost, and releasing it accelerates'
   assert.equal(kart.drift, 0);
 });
 
+test('a boost accelerates a coasting kart without throttle', () => {
+  const kart = grid(0);
+  kart.speed = 35;
+  const coast = { steer: 0, brake: false, gas: false };
+  drive(kart, coast, 1 / 60);
+  assert.ok(kart.speed < 35);
+  const before = kart.speed;
+  kart.boost = 1;
+  drive(kart, coast, 1 / 60);
+  assert.ok(kart.speed > before);
+});
+
 test('boost pads work only within their lane and the wall costs speed', () => {
   const pad = PADS[0], kart = grid(0);
   Object.assign(kart, { s: pad.s - .0001, lane: pad.lane, speed: 42 });

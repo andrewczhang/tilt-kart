@@ -22,8 +22,9 @@ export function drive(k: Kart, input: Input, dt: number) {
     k.drift = 0;
   }
   k.brakeHeld = input.brake;
-  const max = k.boost > 0 ? 56 : slip ? 35 : input.brake ? 12 : 42;
-  k.speed = clamp(k.speed + (input.brake && !slip ? -27 : input.gas || slip ? 24 - k.speed * .29 : -8) * dt, 0, Math.max(0, k.speed - (slip ? 9 : 15) * dt, max));
+  const boosting = k.boost > 0;
+  const max = boosting ? 56 : slip ? 35 : input.brake ? 12 : 42;
+  k.speed = clamp(k.speed + (input.brake && !slip ? -27 : boosting || input.gas || slip ? 24 - k.speed * .29 : -8) * dt, 0, Math.max(0, k.speed - (slip ? 9 : 15) * dt, max));
   k.boost = Math.max(0, k.boost - dt);
   const previous = k.s;
   const gain = slip ? 1.27 : .91;
