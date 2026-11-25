@@ -3,6 +3,7 @@ import { Motor } from './audio';
 import { COLORS, COUNTDOWN, LAPS, LIMIT, SECTORS, clamp, point } from './circuit';
 import { Controls } from './controls';
 import { drive, grid, pose, type Kart, type Pose } from './drive';
+import { readPreference, writePreference } from './preferences';
 import { driver, rank, type Driver, type RoomState, type ServerMessage } from './rules';
 import { View } from './scene';
 
@@ -48,7 +49,7 @@ function menu() {
       <input id="driver" maxlength="20" autocomplete="nickname" required placeholder="Your name">
       <div class="actions"><button class="action" id="join" type="submit">${code ? 'Join room' : 'Create room'}</button>${button('back', 'Back', true)}</div></form>
       <p class="notice" role="status" id="notice"></p><p class="help">${notes()}</p></section>${sceneTag}`);
-    $<HTMLInputElement>('driver').value = localStorage.getItem('tilt-kart-name') ?? '';
+    $<HTMLInputElement>('driver').value = readPreference('tilt-kart-name') ?? '';
     $('notice').textContent = issue;
     $<HTMLFormElement>('setup').onsubmit = e => {
       e.preventDefault();
@@ -129,7 +130,7 @@ async function connect(name: string) {
   joining = true;
   $<HTMLButtonElement>('join').disabled = true;
   $('notice').textContent = 'Connecting…';
-  localStorage.setItem('tilt-kart-name', name);
+  writePreference('tilt-kart-name', name);
   try {
     if (!code) {
       const res = await fetch('/api/rooms', { method: 'POST' });

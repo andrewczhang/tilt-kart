@@ -1,11 +1,12 @@
 import type { Kart } from './drive';
+import { readPreference, writePreference } from './preferences';
 
 export class Motor {
   private ctx?: AudioContext;
   private master?: GainNode;
   private motor?: OscillatorNode;
   private skid?: GainNode;
-  muted = localStorage.getItem('tilt-kart-muted') === 'true';
+  muted = readPreference('tilt-kart-muted') === 'true';
 
   start() {
     if (!this.ctx) {
@@ -40,7 +41,7 @@ export class Motor {
 
   toggle() {
     this.muted = !this.muted;
-    localStorage.setItem('tilt-kart-muted', String(this.muted));
+    writePreference('tilt-kart-muted', String(this.muted));
     if (!this.muted) this.start();
   }
 
