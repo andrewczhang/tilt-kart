@@ -132,6 +132,7 @@ export function bump(a: Kart, b: Kart | RemoteContact, track = RED_BASIN) {
 }
 
 function integrate(k: Kart, input: Input, dt: number, track: Circuit, items: boolean) {
+  const flight = track.flightSpeed(k.s);
   k.star = Math.max(0, k.star - dt);
   if (items && k.spin > 0) {
     k.spin = Math.max(0, k.spin - dt);
@@ -141,8 +142,8 @@ function integrate(k: Kart, input: Input, dt: number, track: Circuit, items: boo
     k.slipAngle = 0;
     k.recovery = 0;
     k.brakeHeld = input.brake;
-    k.speed = Math.max(6, k.speed - 24 * dt);
-    const next = k.s + k.speed * dt / track.length * track.progressScale(k.s, k.lane);
+    k.speed = flight || Math.max(6, k.speed - 24 * dt);
+    const next = k.s + (flight || k.speed * track.progressScale(k.s, k.lane)) * dt / track.length;
     const [left, right] = track.laneBounds(next, k.lane, k.s, k.lane);
     k.lane = clamp(k.lane, left + .85, right - .85);
     k.s = next;
@@ -160,11 +161,10 @@ function integrate(k: Kart, input: Input, dt: number, track: Circuit, items: boo
   const starred = items && k.star > 0;
   const boosting = k.boost > 0;
   const max = starred ? 62 : items && k.turbo > 0 ? (k.turbo > 1.45 ? 60 : MAX_BOOST_SPEED) : boosting && !input.brake ? BOOST_SPEED : slip ? 35 : input.brake ? 12 : TOP_SPEED;
-  const airborne = track.gapAt(k.s);
-  const surface = airborne ? .22 : track.surfaceAt(k.s, k.lane);
-  const slope = airborne ? 0 : track.gradeAt(k.s);
+  const surface = flight ? .22 : track.surfaceAt(k.s, k.lane);
+  const slope = flight ? 0 : track.gradeAt(k.s);
   const accel = input.brake && !slip ? -27 * surface : starred ? 32 - k.speed * .25 : boosting || input.gas || slip ? 24 - k.speed * .29 : -8;
-  k.speed = clamp(k.speed + (accel - slope * 18) * dt, 0, Math.min(items ? Infinity : BOOST_SPEED, Math.max(k.speed - (slip ? 9 : 15) * dt, max)));
+  k.speed = flight || clamp(k.speed + (accel - slope * 18) * dt, 0, Math.min(items ? Infinity : BOOST_SPEED, Math.max(k.speed - (slip ? 9 : 15) * dt, max)));
   k.turbo = Math.max(0, k.turbo - dt);
   k.boost = Math.max(0, k.boost - dt);
   const previous = k.s, previousLane = k.lane;
@@ -174,6 +174,15 @@ function integrate(k: Kart, input: Input, dt: number, track: Circuit, items: boo
   k.recovery = Math.max(0, k.recovery - dt);
   const heading = here.heading + k.yaw + turn;
   const travelHeading = heading + (k.slipAngle - turn) * (1 - grip);
+  if (flight) {
+    k.s += flight * dt / track.length;
+    const lane = previousLane + Math.sin(travelHeading - here.heading) * k.speed * dt;
+    const [left, right] = track.laneBounds(k.s, lane, previous, previousLane);
+    k.lane = clamp(lane, left + .85, right - .85);
+    k.yaw = delta(heading - track.frame(k.s).heading, TURN);
+    k.slipAngle = travelHeading - heading;
+    return;
+  }
   const x = here.x + Math.cos(here.heading) * k.lane + Math.sin(travelHeading) * k.speed * dt;
   const z = here.z - Math.sin(here.heading) * k.lane + Math.cos(travelHeading) * k.speed * dt;
 

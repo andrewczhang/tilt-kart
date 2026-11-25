@@ -255,7 +255,7 @@ export class View {
       }
       const [s, lane, yaw, speed, , boost] = actor.pose;
       const f = frame(s);
-      const air = this.track.airHeight(s, speed);
+      const air = this.track.airHeight(s);
       const roll = point(s, lane + .4).y - point(s, lane - .4).y;
       model.root.position.copy(point(s, lane, .016 + air + this.track.rumbleAt(s) * speed * .002));
       model.root.rotation.set(-Math.atan(this.track.gradeAt(s)) * .62, f.heading, Math.atan(roll / .8), 'YXZ');
@@ -291,7 +291,7 @@ export class View {
       const branch = this.track.branchAt(s);
       const onBranch = branch && lane * branch.side > this.track.widthAt(s) / 2;
       const backLane = onBranch ? this.track.branchAt(backS)?.center ?? lane * .6 : lane * .75;
-      const air = this.track.airHeight(s, speed);
+      const air = this.track.airHeight(s);
       const eye = point(backS, backLane, 6.1 + air);
       if (onBranch) eye.y = Math.max(eye.y, point(s, lane, 5).y);
       const focus = point(s, lane, .7 + air);

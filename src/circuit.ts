@@ -11,6 +11,7 @@ export const wrap = (n: number, period = 1) => ((n % period) + period) % period;
 export const delta = (n: number, period = 1) => wrap(n + period / 2, period) - period / 2;
 export const mix = (a: number, b: number, t: number) => a + (b - a) * t;
 export const SAMPLES = 720;
+const FLIGHT_SECONDS = .8;
 export const inSection = (s: number, section: Section) => {
   const station = s - Math.floor(s) + 1e-10;
   return station >= section.start && station < section.end;
@@ -27,7 +28,8 @@ export type Circuit = TrackSpec & {
   branchAt(s: number): (Branch & { center: number }) | undefined;
   laneBounds(s: number, lane: number, previousS?: number, previousLane?: number): [number, number];
   surfaceAt(s: number, lane: number): number;
-  airHeight(s: number, speed: number): number;
+  airHeight(s: number): number;
+  flightSpeed(s: number): number;
   gapAt(s: number): boolean;
   gradeAt(s: number): number;
   progressScale(s: number, lane: number): number;
@@ -78,11 +80,15 @@ export function getTrack(id: TrackId = DEFAULT_TRACK): Circuit {
     }
     return 0;
   }
-  function airHeight(s: number, speed: number) {
+  function flightSpeed(s: number) {
+    const j = jumps.find(p => inSection(s, p));
+    return j ? (j.end - j.start) * length / FLIGHT_SECONDS : 0;
+  }
+  function airHeight(s: number) {
     const j = jumps.find(p => inSection(s, p));
     if (!j) return 0;
     const t = (wrap(s) - j.start) / (j.end - j.start);
-    return 4 * t * (1 - t) * j.arc * clamp(speed / 42, .4, 1.2);
+    return 4 * t * (1 - t) * j.arc;
   }
   let frames: Frame[] | undefined;
   const headingAt = (t: number) => {
@@ -129,7 +135,7 @@ export function getTrack(id: TrackId = DEFAULT_TRACK): Circuit {
   function rumbleAt(s: number) {
     return spec.feature.kind === 'truss' && inSection(s, spec.feature) ? Math.sin(s * length * 2.8) : 0;
   }
-  const track = { ...spec, id, length, frame, point, widthAt, branchAt, laneBounds, surfaceAt, airHeight, gapAt, gradeAt, progressScale, rumbleAt };
+  const track = { ...spec, id, length, frame, point, widthAt, branchAt, laneBounds, surfaceAt, airHeight, flightSpeed, gapAt, gradeAt, progressScale, rumbleAt };
   circuits.set(id, track);
   return track;
 }

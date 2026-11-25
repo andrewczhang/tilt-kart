@@ -121,14 +121,28 @@ test('ramps lift karts over open gaps and grip varies on ice and lava edges', ()
     assert.equal(track.gapAt(start - .001), false, id);
     assert.equal(track.gapAt(middle), true, id);
     assert.equal(track.gapAt(end), false, id);
-    assert.ok(track.airHeight(middle, 42) > 3, id);
-    assert.ok(track.airHeight(middle, 42) > track.airHeight(middle, 25), id);
-    assert.equal(track.airHeight(start - ramp, 42), 0, id);
+    assert.ok(track.airHeight(middle) > 3, id);
+    assert.equal(track.airHeight(start - ramp), 0, id);
   }
   assert.ok(getTrack('frostline').surfaceAt(.32, 0) < .5);
   assert.equal(getTrack('cinder').surfaceAt(.60, 0), 1);
   assert.ok(getTrack('cinder').surfaceAt(.60, 6) < 1);
   assert.ok(getTrack('arena').widthAt(.62) > getTrack('arena').width + 5);
+});
+
+test('braking cannot strand a stopped kart over any jump gap', () => {
+  for (const id of ['frostline', 'saltwater', 'mesa'] as const) {
+    const track = getTrack(id), { start, end } = track.jumps![0];
+    const kart = grid(0, track);
+    Object.assign(kart, { s: start, lane: 0, speed: 0 });
+    let frames = 0;
+    while (track.gapAt(kart.s) && frames++ < 60) {
+      drive(kart, { steer: 1, brake: true, gas: false }, 1 / 60, track);
+    }
+    assert.ok(kart.s >= end - 1e-10, id);
+    assert.ok(frames >= 47 && frames <= 49, id);
+    assert.equal(track.airHeight(kart.s), 0, id);
+  }
 });
 
 test('power-up speeds and spin-outs stay valid on a split road', () => {
