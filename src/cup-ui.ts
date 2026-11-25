@@ -33,12 +33,13 @@ export function fillCupResults(cup: Cup, player: string) {
     const name = document.createElement('span');
     place.textContent = ['1st', '2nd', '3rd'][i];
     name.textContent = entry.name;
-    step.append(place, name);
+    step.appendChild(place);
+    step.appendChild(name);
     podium.appendChild(step);
   }
   if (!podium.childElementCount) {
     const empty = document.createElement('p');
     empty.textContent = 'No classified finishers.';
-    podium.replaceWith(empty);
+    podium.parentNode!.replaceChild(empty, podium);
   }
 }

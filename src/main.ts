@@ -78,8 +78,12 @@ function displayTrack(id: TrackId) {
   view.setTrack(track);
 }
 
+function selectById(id: string) {
+  return Array.from(ui.querySelectorAll('select')).find(select => select.id === id);
+}
+
 function bindTrackPicker(onChange: (id: TrackId) => void) {
-  const select = $<HTMLSelectElement>('track-select');
+  const select = selectById('track-select')!;
   select.onchange = () => { if (isTrackId(select.value)) onChange(select.value); };
 }
 
@@ -116,8 +120,8 @@ function menu() {
       <div class="actions"><button class="action" type="submit">${touch.touch ? 'Phone controls' : gp ? 'Start cup' : 'Start race'}</button>${button('back', 'Back', true)}</div></form>
       <p class="help">${gp ? 'Finish each race to score points. In a room, the host can choose a cup for everyone.' : notes()}</p></section>${trackTag(track)}`);
     const setup = $<HTMLFormElement>('bot-setup');
-    const picker = $<HTMLSelectElement>('cup-select');
-    if (gp) picker.onchange = () => {
+    const picker = selectById('cup-select');
+    if (picker) picker.onchange = () => {
       if (!isCupId(picker.value)) return;
       $('cup-route').innerHTML = cupItinerary(picker.value);
       displayTrack(CUPS[picker.value].tracks[0]);
@@ -167,7 +171,7 @@ function menu() {
       <div class="actions">${button('share', 'Invite friends', true)}${isHost ? button('start', cup ? 'Start cup' : 'Start race') : ''}${button('leave', 'Leave', true)}</div>
       <p class="notice" id="notice" role="status"></p></section>${trackTag(track)}`);
     if (isHost) {
-      const picker = $<HTMLSelectElement>('cup-select');
+      const picker = selectById('cup-select')!;
       picker.onchange = () => { if (socket?.readyState === WebSocket.OPEN) socket.send(`cup:${picker.value}`); };
       if (!cup) bindTrackPicker(id => { if (socket?.readyState === WebSocket.OPEN) socket.send(`track:${id}`); });
       if (focus === 'cup-select' || focus === 'track-select') $(focus)?.focus();
