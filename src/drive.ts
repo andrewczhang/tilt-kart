@@ -202,9 +202,10 @@ function integrate(k: Kart, input: Input, dt: number, track: Circuit, items: boo
       const rebound = -normal * mix(.48, .68, incidence);
       const recoverForward = input.gas && tangent < 0;
       const along = (recoverForward ? -tangent : tangent) * (1 - .12 * incidence);
-      const reflected = Math.atan2(rebound, along);
+      const escapePin = input.gas && k.speed < 7 && Math.sin(k.yaw) * side > .65;
+      const reflected = escapePin ? -side * Math.PI / 2 : Math.atan2(rebound, along);
       if (!starred) k.speed = Math.hypot(along, rebound);
-      const turnAway = recoverForward ? 1 : clamp((incidence - .5) * 2, 0, 1);
+      const turnAway = recoverForward || escapePin ? 1 : clamp((incidence - .5) * 2, 0, 1);
       k.yaw = delta(k.yaw + delta(reflected - k.yaw, TURN) * turnAway, TURN);
       k.slipAngle = delta(reflected - k.yaw, TURN);
       k.recovery = Math.sin(k.yaw) * side < .45 ? .07 : 0;

@@ -103,6 +103,34 @@ test('throttle and steer into the Red Basin inside wall recover from a backward 
   assert.ok((kart.s - s) * LENGTH > 10);
 });
 
+test('sharp outer-wall impacts do not pin a kart with held or released tilt', () => {
+  const cases = [
+    ['red-basin', .25, 1, 45, .65], ['red-basin', .3, -1, 45, 0],
+    ['frostline', .75, 1, 45, 1], ['frostline', .1, 1, 45, 0],
+    ['switchyard', .2, 1, 45, .65], ['switchyard', .175, 1, 45, 0],
+    ['saltwater', .125, 1, 45, .65], ['saltwater', .075, 1, 45, 0],
+    ['cinder', 0, 1, 55, 1], ['cinder', .7, 1, 45, 0],
+    ['cedar', .1, 1, 45, .65], ['cedar', .1, 1, 45, 0],
+    ['mesa', .675, 1, 55, 1], ['mesa', .075, 1, 45, 0],
+    ['arena', .675, -1, 55, 1], ['arena', .55, -1, 45, 0],
+  ] as const;
+  for (const [id, s, side, angle, tilt] of cases) {
+    const track = getTrack(id);
+    const wall = (s: number) => side * track.laneBounds(s, 0)[side > 0 ? 1 : 0] - WALL_CLEARANCE;
+    const kart = {
+      ...grid(0, track), s, lane: side * (wall(s) - .2), yaw: side * angle * Math.PI / 180,
+      speed: TOP_SPEED, steer: side * (tilt || .35),
+    };
+    let crawl = 0;
+    for (let i = 0; i < 20 / dt; i++) {
+      drive(kart, { ...gas, steer: side * tilt }, dt, track);
+      const atWall = Math.abs(wall(kart.s) - side * kart.lane) < .25;
+      crawl = atWall && kart.speed * 3.6 < 15 ? crawl + dt : 0;
+      assert.ok(crawl < 2, `${id}: pinned with tilt ${tilt} at ${((i + 1) * dt).toFixed(2)} s`);
+    }
+  }
+});
+
 test('a kart bump near a wall leaves room for the kart body on every track', () => {
   for (const id of TRACK_IDS) {
     const track = getTrack(id);
