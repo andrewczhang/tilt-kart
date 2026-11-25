@@ -155,7 +155,8 @@ test('higher difficulty bots commit to more off-line boost pads', () => {
   const track = {
     ...RED_BASIN,
     pads: [pad],
-    frame: (s: number) => ({ ...RED_BASIN.frame(s), heading: 0 }),
+    frame: (s: number) => ({ ...RED_BASIN.frame(s), x: 0, z: s * RED_BASIN.length, heading: 0 }),
+    point: (s: number, lane = 0, height = 0) => RED_BASIN.point(0).set(lane, height, s * RED_BASIN.length),
     gradeAt: () => 0,
   };
   const pickups = DIFFICULTIES.map(difficulty => {
