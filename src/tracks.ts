@@ -123,3 +123,4 @@ export type TrackId = keyof typeof TRACKS;
 export const DEFAULT_TRACK: TrackId = 'red-basin';
 export const TRACK_IDS = Object.keys(TRACKS) as TrackId[];
 export const isTrackId = (value: string): value is TrackId => Object.prototype.hasOwnProperty.call(TRACKS, value);
+export const courseLayoutKey = (id: TrackId) => `${id}-v${TRACKS[id].layoutVersion}`;

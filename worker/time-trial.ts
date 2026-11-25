@@ -1,7 +1,7 @@
-import { getTrack } from '../src/circuit';
+import { getTrack, MAX_ROUTE_PROGRESS_SCALE } from '../src/circuit';
 import { MAX_BOOST_SPEED } from '../src/drive';
 import { decodeGhost, GHOST_INTERVAL, GHOST_PROGRESS_QUANTUM, MAX_GHOST_LENGTH, type Replay, type Standing } from '../src/ghost';
-import { type TrackId } from '../src/tracks';
+import { courseLayoutKey, type TrackId } from '../src/tracks';
 
 const MAX_BODY_BYTES = MAX_GHOST_LENGTH + 512;
 const DRIVER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -15,17 +15,22 @@ export function validSubmission(value: unknown, trackId: TrackId): Submission | 
   const trimmed = name.trim();
   if (!trimmed || trimmed.length > 20 || /[\u0000-\u001f\u007f]/.test(trimmed)) return null;
   const track = getTrack(trackId);
-  if (lapMs / 1000 * MAX_BOOST_SPEED < track.length) return null;
+  const branch = track.branch;
+  const branchFraction = branch ? branch.end - branch.start : 0;
+  const minDistance = track.length * (1 - branchFraction + branchFraction / MAX_ROUTE_PROGRESS_SCALE);
+  if (lapMs / 1000 * MAX_BOOST_SPEED < minDistance) return null;
   const replay = decodeGhost(lapMs, ghost);
   if (!replay) return null;
   for (const [i, [s, lane, yaw, speed, drift, boost]] of replay.poses.entries()) {
-    if (Math.abs(lane) > track.width / 2 || Math.abs(yaw) > 3.1416 || speed < 0 || speed > MAX_BOOST_SPEED
+    const [left, right] = track.laneBounds(s, lane);
+    if (lane < left || lane > right || Math.abs(yaw) > 3.1416 || speed < 0 || speed > MAX_BOOST_SPEED
       || drift < 0 || drift > 1 || boost < 0 || boost > 1.5) return null;
     if (!i) continue;
     const dt = (Math.min(i * GHOST_INTERVAL, lapMs) - (i - 1) * GHOST_INTERVAL) / 1000;
     const [before, beforeLane] = replay.poses[i - 1];
     if (s - before > 2 * MAX_BOOST_SPEED * dt / track.length + GHOST_PROGRESS_QUANTUM) return null;
-    const distance = track.point(before, beforeLane).distanceTo(track.point(s, lane));
+    const from = track.point(before, beforeLane), to = track.point(s, lane);
+    const distance = Math.hypot(to.x - from.x, to.z - from.z);
     if (distance > MAX_BOOST_SPEED * dt + 2 * GHOST_PROGRESS_QUANTUM * track.length + .01) return null;
   }
   return { driverId, name: trimmed, lapMs, ghost };
@@ -50,14 +55,15 @@ async function readJson(req: Request): Promise<unknown> {
 }
 
 export async function timeTrialRequest(req: Request, db: D1Database, trackId: TrackId, resource?: string) {
+  const layout = courseLayoutKey(trackId);
   if (req.method === 'GET' && resource === 'leaderboard') {
     const { results } = await db.prepare(`SELECT name, lap_ms AS lapMs FROM time_trials
-      WHERE track_id = ? ORDER BY lap_ms, id LIMIT 10`).bind(trackId).all<Standing>();
+      WHERE track_id = ? ORDER BY lap_ms, id LIMIT 10`).bind(layout).all<Standing>();
     return Response.json(results);
   }
   if (req.method === 'GET' && resource === 'ghost') {
     const best = await db.prepare(`SELECT name, lap_ms AS lapMs, ghost FROM time_trials
-      WHERE track_id = ? ORDER BY lap_ms, id LIMIT 1`).bind(trackId).first<Replay & Standing>();
+      WHERE track_id = ? ORDER BY lap_ms, id LIMIT 1`).bind(layout).first<Replay & Standing>();
     return Response.json(best);
   }
   if (req.method === 'POST' && !resource) {
@@ -67,10 +73,10 @@ export async function timeTrialRequest(req: Request, db: D1Database, trackId: Tr
     const [, result] = await db.batch<{ rank: number; lapMs: number }>([
       db.prepare(`INSERT INTO time_trials (track_id, driver_id, name, lap_ms, ghost) VALUES (?, ?, ?, ?, ?)
         ON CONFLICT (track_id, driver_id) DO UPDATE SET name = excluded.name, lap_ms = excluded.lap_ms, ghost = excluded.ghost
-        WHERE excluded.lap_ms < time_trials.lap_ms`).bind(trackId, driverId, name, lapMs, ghost),
+        WHERE excluded.lap_ms < time_trials.lap_ms`).bind(layout, driverId, name, lapMs, ghost),
       db.prepare(`SELECT lap_ms AS lapMs, 1 + (SELECT COUNT(*) FROM time_trials
         WHERE track_id = best.track_id AND (lap_ms, id) < (best.lap_ms, best.id)) AS rank
-        FROM time_trials AS best WHERE track_id = ? AND driver_id = ?`).bind(trackId, driverId),
+        FROM time_trials AS best WHERE track_id = ? AND driver_id = ?`).bind(layout, driverId),
     ]);
     return Response.json(result.results[0]);
   }

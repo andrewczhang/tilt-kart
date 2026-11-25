@@ -12,6 +12,7 @@ export const delta = (n: number, period = 1) => wrap(n + period / 2, period) - p
 export const mix = (a: number, b: number, t: number) => a + (b - a) * t;
 export const SAMPLES = 720;
 const FLIGHT_SECONDS = .8;
+export const MAX_ROUTE_PROGRESS_SCALE = 1.38;
 export const inSection = (s: number, section: Section) => {
   const station = s - Math.floor(s) + 1e-10;
   return station >= section.start && station < section.end;
@@ -130,7 +131,7 @@ export function getTrack(id: TrackId = DEFAULT_TRACK): Circuit {
     const offset = lane - branch.center;
     const a = point(s - step, (branchAt(s - step)?.center ?? branch.center) + offset);
     const b = point(s + step, (branchAt(s + step)?.center ?? branch.center) + offset);
-    return clamp(4 / a.distanceTo(b), .75, 1.38);
+    return clamp(4 / a.distanceTo(b), .75, MAX_ROUTE_PROGRESS_SCALE);
   }
   function rumbleAt(s: number) {
     return spec.feature.kind === 'truss' && inSection(s, spec.feature) ? Math.sin(s * length * 2.8) : 0;

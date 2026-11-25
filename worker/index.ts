@@ -3,7 +3,7 @@ import { COUNTDOWN, LIMIT, delta, getTrack, wrap, type Circuit } from '../src/ci
 import { cupTrack, isCupId, newCup, nextRound, scoreRound, type Cup } from '../src/cups';
 import { BOX_RESPAWN, BOX_SPOTS, validItemEvent, type ItemEvent } from '../src/powerups';
 import { advance, driver, validPose, type Driver, type RoomState, type ServerMessage } from '../src/rules';
-import { DEFAULT_TRACK, isTrackId, type TrackId } from '../src/tracks';
+import { courseLayoutKey, DEFAULT_TRACK, isTrackId, type TrackId } from '../src/tracks';
 import { timeTrialRequest } from './time-trial';
 
 type Env = { ASSETS: Fetcher; ROOMS: DurableObjectNamespace<Room>; TIME_TRIALS: D1Database };
@@ -20,8 +20,10 @@ export default {
     if (url.pathname.startsWith('/api/') && req.headers.has('Origin') && req.headers.get('Origin') !== url.origin) {
       return new Response('Origin not allowed', { status: 403 });
     }
-    const trial = /^\/api\/tt\/([^/]+)(?:\/(leaderboard|ghost))?$/.exec(url.pathname);
-    if (trial && isTrackId(trial[1])) return timeTrialRequest(req, env.TIME_TRIALS, trial[1], trial[2]);
+    const trial = /^\/api\/tt\/([^/]+)-v(\d+)(?:\/(leaderboard|ghost))?$/.exec(url.pathname);
+    if (trial && isTrackId(trial[1]) && `${trial[1]}-v${trial[2]}` === courseLayoutKey(trial[1])) {
+      return timeTrialRequest(req, env.TIME_TRIALS, trial[1], trial[3]);
+    }
     if (url.pathname === '/api/rooms' && req.method === 'POST') {
       const code = crypto.randomUUID().slice(0, 8).toUpperCase();
       const response = await env.ROOMS.getByName(code).fetch(new Request(new URL('/create', url), { method: 'POST' }));
