@@ -481,7 +481,11 @@ function begin() {
     <div class="hud-actions"><button class="tool" id="music"></button><button class="tool" id="sound"></button><button class="tool" id="exit">Exit</button></div>
     <div class="status" id="status" role="status"></div>${trial ? '' : '<div class="item-banner" id="item-banner" role="status"></div>'}
     <div class="boost" aria-label="Drift boost"><i id="boost"></i></div>
-    <div class="touch"${touch.touch ? '' : ' hidden'}><button id="left">Left</button><button id="right">Right</button><button id="brake">Brake / Drift</button></div>
+    <div class="touch"${touch.touch ? '' : ' hidden'}>
+      <button id="left"><span class="touch-face"><svg viewBox="0 0 36 20" aria-hidden="true"><path d="M13 2 3 10l10 8h8l-10-8 10-8Zm13 0L16 10l10 8h8l-10-8 10-8Z"/></svg>Left</span></button>
+      <button id="right"><span class="touch-face"><svg viewBox="0 0 36 20" aria-hidden="true"><path d="M10 2H2l10 8-10 8h8l10-8Zm13 0h-8l10 8-10 8h8l10-8Z"/></svg>Right</span></button>
+      <button id="brake"><span class="touch-face"><svg viewBox="0 0 36 20" aria-hidden="true"><path fill-rule="evenodd" d="M9 1h24l-6 18H3Zm4 4-1 2h15l1-2Zm-2 4-1 2h15l1-2Zm-2 4-1 2h15l1-2Z"/></svg>Brake / Drift</span></button>
+    </div>
     <dialog id="exit-dialog" aria-labelledby="exit-title">
       <h2 id="exit-title">Exit race?</h2><p>You’ll leave this race and lose your result.</p>
       <div class="actions"><button class="action alt" id="keep-racing" autofocus>Keep racing</button>${button('confirm-exit', 'Exit race')}</div>

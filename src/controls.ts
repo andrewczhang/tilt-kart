@@ -20,7 +20,7 @@ export class Controls {
       this.keys.add(key);
     });
     addEventListener('keyup', e => this.keys.delete(e.key.toLowerCase()));
-    addEventListener('blur', () => { this.keys.clear(); this.pointers.clear(); this.itemQueued = false; });
+    addEventListener('blur', () => { this.keys.clear(); this.clearPointers(); this.itemQueued = false; });
   }
 
   queueItem() {
@@ -34,24 +34,36 @@ export class Controls {
   }
 
   bindTouch() {
-    this.pointers.clear();
+    this.clearPointers();
     for (const id of ['left', 'right', 'brake'] as const) {
       const button = document.getElementById(id)!;
       button.addEventListener('pointerdown', e => {
         e.preventDefault(); button.setPointerCapture(e.pointerId); this.pointers.set(e.pointerId, id);
+        button.toggleAttribute('data-held', true);
       });
       for (const event of ['pointerup', 'pointercancel', 'lostpointercapture'] as const) {
-        button.addEventListener(event, e => this.pointers.delete(e.pointerId));
+        button.addEventListener(event, e => {
+          this.pointers.delete(e.pointerId);
+          button.toggleAttribute('data-held', this.pointerHeld(id));
+        });
       }
     }
   }
 
+  private clearPointers() {
+    for (const action of new Set(this.pointers.values())) document.getElementById(action)?.removeAttribute('data-held');
+    this.pointers.clear();
+  }
+
+  private pointerHeld(action: TouchAction) {
+    return [...this.pointers.values()].includes(action);
+  }
+
   input(): Input {
     const held = (...keys: string[]) => keys.some(k => this.keys.has(k));
-    const pointer = (action: TouchAction) => [...this.pointers.values()].includes(action);
     return {
-      steer: Number(held('a', 'arrowleft') || pointer('left')) - Number(held('d', 'arrowright') || pointer('right')),
-      brake: held('s', 'arrowdown', ' ') || pointer('brake'),
+      steer: Number(held('a', 'arrowleft') || this.pointerHeld('left')) - Number(held('d', 'arrowright') || this.pointerHeld('right')),
+      brake: held('s', 'arrowdown', ' ') || this.pointerHeld('brake'),
       gas: this.touch || held('w', 'arrowup')
     };
   }

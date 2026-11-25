@@ -94,7 +94,15 @@ test('space activates menu buttons but brakes during a race regardless of focus'
 
 test('phone buttons steer and brake together without motion data', () => {
   const events = new EventTarget();
-  const button = () => Object.assign(new EventTarget(), { setPointerCapture: () => {} });
+  const button = () => {
+    const attrs = new Set<string>();
+    return Object.assign(new EventTarget(), {
+      setPointerCapture: () => {},
+      toggleAttribute: (name: string, held: boolean) => held ? attrs.add(name) : attrs.delete(name),
+      removeAttribute: (name: string) => attrs.delete(name),
+      hasAttribute: (name: string) => attrs.has(name),
+    });
+  };
   const buttons = { left: button(), right: button(), brake: button() };
   const press = (id: keyof typeof buttons, type: string, pointerId: number) =>
     buttons[id].dispatchEvent(Object.assign(new Event(type, { cancelable: true }), { pointerId }));
@@ -111,12 +119,24 @@ test('phone buttons steer and brake together without motion data', () => {
     assert.equal(press('left', 'pointerdown', 1), false);
     press('brake', 'pointerdown', 2);
     assert.deepEqual(controls.input(), { steer: 1, brake: true, gas: true });
+    assert.equal(buttons.left.hasAttribute('data-held'), true);
+    assert.equal(buttons.brake.hasAttribute('data-held'), true);
     press('left', 'pointerup', 1);
+    assert.equal(buttons.left.hasAttribute('data-held'), false);
     press('right', 'pointerdown', 3);
     assert.deepEqual(controls.input(), { steer: -1, brake: true, gas: true });
+    press('right', 'pointerdown', 4);
     press('right', 'pointercancel', 3);
+    assert.equal(buttons.right.hasAttribute('data-held'), true);
+    press('right', 'pointercancel', 4);
+    assert.equal(buttons.right.hasAttribute('data-held'), false);
     assert.deepEqual(controls.input(), { steer: 0, brake: true, gas: true });
     press('brake', 'lostpointercapture', 2);
+    assert.equal(buttons.brake.hasAttribute('data-held'), false);
+    assert.deepEqual(controls.input(), { steer: 0, brake: false, gas: true });
+    press('left', 'pointerdown', 5);
+    events.dispatchEvent(new Event('blur'));
+    assert.equal(buttons.left.hasAttribute('data-held'), false);
     assert.deepEqual(controls.input(), { steer: 0, brake: false, gas: true });
   });
 });
