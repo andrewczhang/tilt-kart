@@ -436,7 +436,7 @@ function results() {
     return;
   }
   const racers = localRace?.racers;
-  const rematch = !localRace && room?.host === player && !room.cup;
+  const retry = room?.cup ? '' : racers ? 'Race again' : room?.host === player ? 'Rematch' : '';
   show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet"><p class="identity">Tilt Kart / ${track.name}</p>
     <h2 class="title" id="result-title">${racers === 1 ? 'Practice results' : 'Race results'}</h2>
     ${me ? `<p class="finish-time"><small>Your result</small><strong>${finish === null ? 'DNF' : formatTime(finish)}</strong></p>
@@ -445,12 +445,11 @@ function results() {
     <dl class="records" aria-label="Personal bests"><div><dt>Best lap</dt><dd>${formatTime(records.lap)}</dd></div>
       <div><dt>Best time</dt><dd>${formatTime(records.race)}</dd></div></dl>` : ''}
     <ol class="list" id="results-list"></ol><p id="result-status"></p>
-    <div class="actions">${button('back', 'Main menu', true)}${racers ? button('retry', 'Race again') : rematch ? button('retry', 'Rematch') : ''}</div>
+    <div class="actions">${button('back', 'Main menu', true)}${retry ? button('retry', retry) : ''}</div>
     </div></section>`);
   updateResults();
   doOn('back', home);
-  if (racers) doOn('retry', () => prepareLocal(racers, results));
-  else if (rematch) doOn('retry', () => socket?.send('rematch'));
+  if (retry) doOn('retry', () => racers ? prepareLocal(racers, results) : socket?.send('rematch'));
 }
 
 function cupResults(cup: Cup) {
