@@ -18,6 +18,7 @@ export const BOOST_SPEED = TOP_SPEED * 1.15;
 const TURN = 2 * Math.PI;
 const STEP = 1 / 60;
 const KART_DIAMETER = 2.65;
+export const WALL_CLEARANCE = 1.9;
 
 export function grid(slot: number, track = RED_BASIN): Kart {
   return { s: -(5 + Math.floor(slot / 2) * 5) / track.length, lane: slot % 2 ? 2.2 : -2.2, yaw: 0, slipAngle: 0, recovery: 0, speed: 0, drift: 0, boost: 0, steer: 0, brakeHeld: false, spin: 0, star: 0, turbo: 0 };
@@ -50,6 +51,11 @@ function activatePads(k: Kart, previous: number, previousLane: number, track: Ci
   }
 }
 
+function fitLane(track: Circuit, s: number, lane: number, previousS: number, previousLane: number) {
+  const [left, right] = track.laneBounds(s, lane, previousS, previousLane);
+  return clamp(lane, left + WALL_CLEARANCE, right - WALL_CLEARANCE);
+}
+
 export function substep(dt: number, step: (dt: number) => void) {
   const count = Math.ceil(dt / STEP - 1e-9);
   for (let i = 0; i < count; i++) step(dt / count);
@@ -69,8 +75,7 @@ function project(k: Kart, x: number, z: number, heading: number, track: Circuit,
   k.s = Math.min(k.s, maxProgress);
   const next = track.frame(k.s);
   const lane = (x - next.x) * Math.cos(next.heading) - (z - next.z) * Math.sin(next.heading);
-  const [left, right] = track.laneBounds(k.s, lane, previous, previousLane);
-  k.lane = clamp(lane, left + .85, right - .85);
+  k.lane = fitLane(track, k.s, lane, previous, previousLane);
   k.yaw = delta(heading - next.heading, TURN);
   return { lane, heading: next.heading };
 }
@@ -145,8 +150,7 @@ function integrate(k: Kart, input: Input, dt: number, track: Circuit, items: boo
     k.brakeHeld = input.brake;
     k.speed = Math.max(6, k.speed - 24 * dt);
     const next = k.s + (flight || k.speed * track.progressScale(k.s, k.lane)) * dt / track.length;
-    const [left, right] = track.laneBounds(next, k.lane, k.s, k.lane);
-    k.lane = clamp(k.lane, left + .85, right - .85);
+    k.lane = fitLane(track, next, k.lane, k.s, k.lane);
     k.s = next;
     k.yaw += (0 - k.yaw) * Math.min(1, dt * 8);
     return;
@@ -178,8 +182,7 @@ function integrate(k: Kart, input: Input, dt: number, track: Circuit, items: boo
   if (flight) {
     k.s += flight * dt / track.length;
     const lane = previousLane + Math.sin(travelHeading - here.heading) * k.speed * dt;
-    const [left, right] = track.laneBounds(k.s, lane, previous, previousLane);
-    k.lane = clamp(lane, left + .85, right - .85);
+    k.lane = fitLane(track, k.s, lane, previous, previousLane);
     k.yaw = delta(heading - track.frame(k.s).heading, TURN);
     k.slipAngle = travelHeading - heading;
     return;
@@ -197,10 +200,12 @@ function integrate(k: Kart, input: Input, dt: number, track: Circuit, items: boo
       const tangent = Math.cos(relative) * k.speed;
       const incidence = Math.abs(normal) / k.speed;
       const rebound = -normal * mix(.48, .68, incidence);
-      const along = tangent * (1 - .12 * incidence);
+      const recoverForward = input.gas && tangent < 0;
+      const along = (recoverForward ? -tangent : tangent) * (1 - .12 * incidence);
       const reflected = Math.atan2(rebound, along);
       if (!starred) k.speed = Math.hypot(along, rebound);
-      k.yaw = delta(k.yaw + delta(reflected - k.yaw, TURN) * clamp((incidence - .5) * 2, 0, 1), TURN);
+      const turnAway = recoverForward ? 1 : clamp((incidence - .5) * 2, 0, 1);
+      k.yaw = delta(k.yaw + delta(reflected - k.yaw, TURN) * turnAway, TURN);
       k.slipAngle = delta(reflected - k.yaw, TURN);
       k.recovery = Math.sin(k.yaw) * side < .45 ? .07 : 0;
     }
