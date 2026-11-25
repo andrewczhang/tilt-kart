@@ -1,10 +1,12 @@
 import { DurableObject } from 'cloudflare:workers';
-import { COUNTDOWN, LIMIT } from '../src/circuit';
+import { COUNTDOWN, LIMIT, getTrack } from '../src/circuit';
+import { grid, pose } from '../src/drive';
 import { advance, driver, validPose, type Driver, type RoomState, type ServerMessage } from '../src/rules';
+import { DEFAULT_TRACK, isTrackId, type TrackId } from '../src/tracks';
 
 type Env = { ASSETS: Fetcher; ROOMS: DurableObjectNamespace<Room> };
 type Away = Driver & { token?: string };
-type Meta = { created: number; host: string; start: number | null; complete: boolean; gone: Away[] };
+type Meta = { created: number; host: string; start: number | null; complete: boolean; gone: Away[]; track?: TrackId };
 type Attachment = { driver: Driver; last: number; token?: string; watching?: boolean };
 const CODE = /^[A-Z0-9]{8}$/;
 const TOKEN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -83,7 +85,7 @@ export class Room extends DurableObject<Env> {
       const slots = new Set(sockets.map(s => this.data(s)!.driver.slot));
       let slot = 0;
       while (slots.has(slot)) slot++;
-      data = { driver: driver(crypto.randomUUID().slice(0, 8), name, watching ? 0 : slot), last: 0, token, watching };
+      data = { driver: driver(crypto.randomUUID().slice(0, 8), name, watching ? 0 : slot, getTrack(meta.track)), last: 0, token, watching };
     }
     const { id } = data.driver;
     pair[1].serializeAttachment(data);
@@ -109,6 +111,7 @@ export class Room extends DurableObject<Env> {
       meta.start = null;
       meta.complete = false;
       meta.gone = [];
+      const track = getTrack(meta.track);
       const entries = this.sockets().map(s => ({ s, data: this.data(s)! }));
       const slots = new Set(entries.filter(e => !e.data.watching).map(e => e.data.driver.slot));
       for (const { s, data } of entries) {
@@ -118,7 +121,20 @@ export class Room extends DurableObject<Env> {
           slots.add(slot);
         }
         const { id, name } = data.driver;
-        s.serializeAttachment({ driver: driver(id, name, slot), last: 0, token: data.token } satisfies Attachment);
+        s.serializeAttachment({ driver: driver(id, name, slot, track), last: 0, token: data.token } satisfies Attachment);
+      }
+      await this.publish(meta);
+      return;
+    }
+    if (raw.startsWith('track:')) {
+      const id = raw.slice(6);
+      if (data.driver.id !== meta.host || meta.start !== null || !isTrackId(id) || id === (meta.track ?? DEFAULT_TRACK)) return;
+      meta.track = id;
+      const track = getTrack(id);
+      for (const socket of this.sockets()) {
+        const attachment = this.data(socket)!;
+        attachment.driver.pose = pose(grid(attachment.driver.slot, track));
+        socket.serializeAttachment(attachment);
       }
       await this.publish(meta);
       return;
@@ -137,7 +153,8 @@ export class Room extends DurableObject<Env> {
     if (data.watching || raw === 'status' || now - data.last < 42 || data.driver.finish !== null) return;
     let p: unknown;
     try { p = JSON.parse(raw); } catch { return; }
-    if (!validPose(p) || !advance(data.driver, p, now - meta.start, (now - (data.last || meta.start)) / 1000)) return;
+    const track = getTrack(meta.track);
+    if (!validPose(p, track) || !advance(data.driver, p, now - meta.start, (now - (data.last || meta.start)) / 1000, track)) return;
     data.last = now;
     ws.serializeAttachment(data);
     const { id, checkpoint, finish } = data.driver;
@@ -174,7 +191,7 @@ export class Room extends DurableObject<Env> {
   }
   private snapshot(meta: Meta): RoomState {
     return {
-      host: meta.host, start: meta.start, complete: meta.complete,
+      host: meta.host, start: meta.start, complete: meta.complete, track: meta.track ?? DEFAULT_TRACK,
       drivers: [...this.sockets().map(s => this.data(s)!).filter(d => !d.watching).map(d => d.driver),
         ...meta.gone.map(({ token: _token, ...d }) => d)]
     };

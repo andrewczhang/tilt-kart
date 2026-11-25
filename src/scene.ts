@@ -1,10 +1,12 @@
 import * as T from 'three';
-import { COLORS, WIDTH, SAMPLES, clamp, delta, frame, point, wrap } from './circuit';
-import { PADS, PAD_LENGTH, PAD_WIDTH, type Pose } from './drive';
+import { COLORS, RED_BASIN, SAMPLES, clamp, delta, wrap, type Circuit } from './circuit';
+import { PAD_LENGTH, PAD_WIDTH, type Pose } from './drive';
+import { themedScenery } from './track-art';
+import { TRACK_IDS } from './tracks';
 
 const flat = (color: T.ColorRepresentation) => new T.MeshLambertMaterial({ color, flatShading: true });
-const asphalt = flat('#3b444d'), white = flat('#f7e6c9'), coral = flat('#e94d30'), navy = flat('#222b36');
-const tire = flat('#1d232b'), alloy = flat('#bcc7bb'), blue = flat('#25949a');
+const white = flat('#f7e6c9'), coral = flat('#e94d30'), navy = flat('#222b36');
+const tire = flat('#1d232b'), alloy = flat('#bcc7bb');
 const box = new T.BoxGeometry();
 const wheel = new T.CylinderGeometry(.39, .39, .32, 10).rotateZ(Math.PI / 2);
 const helmet = new T.IcosahedronGeometry(.38, 1);
@@ -40,25 +42,27 @@ function strips(defs: Strip[], segments = SAMPLES, start = 0, end = 1) {
   return new T.Mesh(geo, new T.MeshLambertMaterial({ vertexColors: true, side: T.DoubleSide, flatShading: true }));
 }
 
-const edge = WIDTH / 2;
-const at = (lane: number, h = 0) => (s: number) => point(s, lane, h);
-function circuit(scene: T.Scene) {
+function circuit(scene: T.Group, track: Circuit) {
+  const { frame, point } = track;
+  const edge = track.width / 2;
+  const at = (lane: number, h = 0) => (s: number) => point(s, lane, h);
+  const skirt = (lane: number) => track.id === 'red-basin' ? (s: number) => point(s, lane).setY(-2) : at(lane, -.60);
   scene.add(strips([
-    [at(-edge), at(edge), '#424c53'],
-    [(s) => point(s, -edge).setY(-2), at(-edge), '#614438'],
-    [at(edge), (s) => point(s, edge).setY(-2), '#614438'],
+    [at(-edge), at(edge), track.road],
+    [skirt(-edge), at(-edge), track.id === 'red-basin' ? '#614438' : track.wall],
+    [at(edge), skirt(edge), track.id === 'red-basin' ? '#614438' : track.wall],
     ...[-1, 1].flatMap((sign): Strip[] => {
       const lane = sign * edge, outside = sign * (edge + .32);
       return [
-        [at(lane - sign * .73, .022), at(lane, .022), i => (i >> 1) % 2 ? '#fff0d8' : '#ef5c3b'],
-        [at(lane, 1.02), at(outside, 1.02), '#f7ddab'],
-        [at(lane, .25), at(lane, 1.02), i => (i >> 3) % 2 ? '#d85c39' : '#f9d59b'],
-        [at(outside, 1.02), at(outside, 0), '#864934'],
+        [at(lane - sign * .73, .022), at(lane, .022), i => (i >> 1) % 2 ? track.trim : track.curb],
+        [at(lane, 1.02), at(outside, 1.02), track.trim],
+        [at(lane, .25), at(lane, 1.02), i => (i >> 3) % 2 ? track.curb : track.trim],
+        [at(outside, 1.02), at(outside, 0), track.wall],
         [at(lane, .03), at(lane, .25), '#30333d']
       ];
     })
   ]));
-  const line: Strip[] = Array.from({ length: 16 }, (_, i) => [at(-edge + i * WIDTH / 16, .032), at(-edge + (i + 1) * WIDTH / 16, .032), row => (row + i) % 2 ? '#242b32' : '#fff3dc']);
+  const line: Strip[] = Array.from({ length: 16 }, (_, i) => [at(-edge + i * track.width / 16, .032), at(-edge + (i + 1) * track.width / 16, .032), row => (row + i) % 2 ? '#242b32' : track.trim]);
   scene.add(strips(line, 2, -.0014, .0014));
   const marks = new T.InstancedMesh(box, white, 115);
   const o = new T.Object3D();
@@ -71,12 +75,13 @@ function circuit(scene: T.Scene) {
     marks.setMatrixAt(i, o.matrix);
   }
   scene.add(marks);
-  for (const pad of PADS) {
+  const padMaterial = track.id === 'switchyard' || track.id === 'cinder' ? new T.MeshBasicMaterial({ color: track.pad }) : flat(track.pad);
+  for (const pad of track.pads) {
     const f = frame(pad.s);
     const g = new T.Group();
     g.position.copy(point(pad.s, pad.lane, .044));
     g.rotation.set(0, f.heading, Math.atan(f.bank), 'YXZ');
-    block(g, blue, 0, 0, 0, PAD_WIDTH, .04, PAD_LENGTH);
+    block(g, padMaterial, 0, 0, 0, PAD_WIDTH, .04, PAD_LENGTH);
     for (let i = -1; i <= 1; i++) {
       block(g, white, -.56, .033, i * 1.2, 1.35, .03, .2).rotation.y = -.45;
       block(g, white, .56, .033, i * 1.2, 1.35, .03, .2).rotation.y = .45;
@@ -86,23 +91,26 @@ function circuit(scene: T.Scene) {
   const arch = new T.Group();
   arch.position.copy(point(0));
   arch.rotation.y = frame(0).heading;
-  for (const x of [-8, 8]) {
+  const paint = flat(track.curb);
+  for (const x of [-edge - .5, edge + .5]) {
     block(arch, navy, x, 2.3, 0, .7, 6, .75);
-    block(arch, coral, x, 2.6, -.41, .3, 4.8, .13);
+    block(arch, paint, x, 2.6, -.41, .3, 4.8, .13);
   }
-  block(arch, navy, 0, 5.4, 0, 16.8, 2.1, .9);
+  block(arch, navy, 0, 5.4, 0, track.width + 1.8, 2.1, .9);
   const canvas = document.createElement('canvas');
   canvas.width = 1024; canvas.height = 128;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#ef5437'; ctx.fillRect(0, 0, 1024, 128);
-  ctx.fillStyle = '#fff2d0'; ctx.font = 'italic 900 89px system-ui'; ctx.textAlign = 'center'; ctx.fillText('RED BASIN   /   01', 512, 95);
+  ctx.fillStyle = track.sign[0]; ctx.fillRect(0, 0, 1024, 128);
+  ctx.fillStyle = track.sign[1]; ctx.font = 'italic 900 84px system-ui'; ctx.textAlign = 'center';
+  ctx.fillText(`${track.name.toUpperCase()}   /   ${String(TRACK_IDS.indexOf(track.id) + 1).padStart(2, '0')}`, 512, 94, 956);
   const tex = new T.CanvasTexture(canvas); tex.colorSpace = T.SRGBColorSpace;
-  const sign = new T.Mesh(new T.PlaneGeometry(15.5, 1.72), new T.MeshBasicMaterial({ map: tex, side: T.DoubleSide }));
+  const sign = new T.Mesh(new T.PlaneGeometry(track.width + .5, 1.72), new T.MeshBasicMaterial({ map: tex, side: T.DoubleSide }));
   sign.position.set(0, 5.4, -.46); sign.rotation.y = Math.PI; arch.add(sign);
   scene.add(arch);
 }
 
-function scenery(scene: T.Scene) {
+function scenery(scene: T.Group, track: Circuit) {
+  const { frame, point } = track;
   const ground = new T.Mesh(new T.PlaneGeometry(2600, 2600), flat('#c98457'));
   ground.rotation.x = -Math.PI / 2; ground.position.y = -1.2; scene.add(ground);
   let seed = 47063;
@@ -190,18 +198,47 @@ export class View {
   private readonly models = new Map<string, ReturnType<typeof kart>>();
   private readonly focus = new T.Vector3();
   private readonly labels = new Map<string, HTMLSpanElement>();
+  private world?: T.Group;
+  private track = RED_BASIN;
+  private resetCamera = false;
   constructor(private readonly canvas: HTMLCanvasElement, private readonly labelLayer: HTMLElement) {
     this.renderer = new T.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
-    this.scene.background = new T.Color('#a3d6d5');
-    this.scene.fog = new T.FogExp2('#aed9ce', .0049);
-    this.scene.add(new T.HemisphereLight('#fff3d2', '#a48980', 2.17));
-    const sun = new T.DirectionalLight('#fff0d4', 2.3);
-    sun.position.set(-65, 90, -45); this.scene.add(sun);
-    circuit(this.scene);
-    scenery(this.scene);
+    this.setTrack(RED_BASIN);
+  }
+  setTrack(track: Circuit) {
+    if (this.world && track.id === this.track.id) return;
+    if (this.world) {
+      const geometries = new Set<T.BufferGeometry>(), materials = new Set<T.Material>();
+      this.world.traverse(node => {
+        if (!(node instanceof T.Mesh)) return;
+        if (node instanceof T.InstancedMesh) node.dispose();
+        if (node.geometry !== box) geometries.add(node.geometry);
+        if (node.material !== white && node.material !== navy) materials.add(node.material);
+      });
+      geometries.forEach(geo => geo.dispose());
+      materials.forEach(mat => {
+        if (mat instanceof T.MeshBasicMaterial) mat.map?.dispose();
+        mat.dispose();
+      });
+      this.scene.remove(this.world);
+    }
+    this.track = track;
+    this.resetCamera = true;
+    this.world = new T.Group();
+    this.scene.background = new T.Color(track.sky);
+    this.scene.fog = new T.FogExp2(track.fog, track.fogDensity);
+    const night = track.id === 'switchyard';
+    this.world.add(new T.HemisphereLight(track.ambient, track.id === 'red-basin' ? '#a48980' : track.ground, night ? 1.36 : 2.17));
+    const sun = new T.DirectionalLight(track.sun, night ? 1.15 : 2.3);
+    sun.position.set(-65, 90, -45); this.world.add(sun);
+    circuit(this.world, track);
+    if (track.id === 'red-basin') scenery(this.world, track);
+    else themedScenery(this.world, track);
+    this.scene.add(this.world);
   }
   render(local: Pose, actors: { id: string; name: string; slot: number; pose: Pose }[], own: string, dt: number, menu = false) {
+    const { frame, point } = this.track;
     const width = this.canvas.clientWidth, height = this.canvas.clientHeight;
     const aspect = width / Math.max(1, height);
     const fov = aspect < 1 ? 75 : 59;
@@ -237,7 +274,8 @@ export class View {
       this.models.delete(id); this.labels.get(id)?.remove(); this.labels.delete(id);
     }
     const [s, lane, , speed, , boost] = local;
-    const soft = menu ? 1 : clamp(dt * 7.5, 0, 1);
+    const soft = menu || this.resetCamera ? 1 : clamp(dt * 7.5, 0, 1);
+    this.resetCamera = false;
     const here = frame(s), behind = frame(s - .011);
     const heading = here.heading + delta(behind.heading - here.heading, Math.PI * 2) * .48;
     const eye = point(s, menu ? lane - 10 : lane * .78, menu ? 7.5 : 5.4);
