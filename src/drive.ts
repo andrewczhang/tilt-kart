@@ -4,8 +4,9 @@ import type { BoostPad } from './tracks';
 export type Kart = { s: number; lane: number; yaw: number; slipAngle: number; recovery: number; speed: number; drift: number; boost: number; steer: number; brakeHeld: boolean; spin: number; star: number; turbo: number };
 export type Input = { steer: number; brake: boolean; gas: boolean; maxProgress?: number };
 export type Pose = [s: number, lane: number, yaw: number, speed: number, drift: number, boost: number];
-export type RemoteSample = { pose: Pose; receivedAt: number };
-type RemoteContact = { x: number; y: number; z: number; vx: number; vz: number };
+type RemoteVelocity = { x: number; z: number };
+export type RemoteSample = { pose: Pose; receivedAt: number; velocity?: RemoteVelocity };
+type RemoteContact = { x: number; y: number; z: number; velocity: RemoteVelocity | undefined };
 export const PADS = RED_BASIN.pads;
 export const PAD_WIDTH = 3.3;
 export const PAD_LENGTH = 4.4;
@@ -73,15 +74,27 @@ function nudge(k: Kart, x: number, z: number, heading: number, vx: number, vz: n
   }
 }
 
-export function remoteContact({ pose: [s, lane, yaw, speed], receivedAt }: RemoteSample, now: number, track = RED_BASIN): RemoteContact {
-  const p = track.point(s, lane), heading = track.frame(s).heading + yaw;
-  const vx = Math.sin(heading) * speed, vz = Math.cos(heading) * speed;
+export function sampleRemote(pose: Pose, receivedAt: number, previous?: RemoteSample, track = RED_BASIN): RemoteSample {
+  const sample: RemoteSample = { pose, receivedAt };
+  if (!previous) return sample;
+  const dt = (receivedAt - previous.receivedAt) / 1000;
+  if (dt < .025 || dt > .25) return sample;
+  const from = track.point(previous.pose[0], previous.pose[1]);
+  const to = track.point(pose[0], pose[1]);
+  const dx = to.x - from.x, dz = to.z - from.z;
+  const scale = Math.min(1 / dt, BOOST_SPEED / Math.hypot(dx, dz));
+  sample.velocity = { x: dx * scale, z: dz * scale };
+  return sample;
+}
+
+export function remoteContact({ pose: [s, lane], receivedAt, velocity }: RemoteSample, now: number, track = RED_BASIN): RemoteContact {
+  const p = track.point(s, lane);
   const age = clamp((now - receivedAt) / 1000, 0, .1);
-  return { x: p.x + vx * age, y: p.y, z: p.z + vz * age, vx, vz };
+  return { x: p.x + (velocity?.x ?? 0) * age, y: p.y, z: p.z + (velocity?.z ?? 0) * age, velocity };
 }
 
 export function bump(a: Kart, b: Kart | RemoteContact, track = RED_BASIN) {
-  const remote = 'vx' in b;
+  const remote = 'velocity' in b;
   const aFrame = track.frame(a.s);
   const p = track.point(a.s, a.lane), q = remote ? b : track.point(b.s, b.lane);
   if (Math.abs(p.y - q.y) > 2.5) return;
@@ -93,13 +106,12 @@ export function bump(a: Kart, b: Kart | RemoteContact, track = RED_BASIN) {
   const aHeading = aFrame.heading + a.yaw, bHeading = remote ? 0 : track.frame(b.s).heading + b.yaw;
   const av = aHeading + a.slipAngle, bv = bHeading + (remote ? 0 : b.slipAngle);
   const ax = Math.sin(av) * a.speed, az = Math.cos(av) * a.speed;
-  const bx = remote ? b.vx : Math.sin(bv) * b.speed;
-  const bz = remote ? b.vz : Math.cos(bv) * b.speed;
+  const velocity = remote ? b.velocity : { x: Math.sin(bv) * b.speed, z: Math.cos(bv) * b.speed };
   const fraction = remote ? 1 : .5;
   const correction = (KART_DIAMETER - distance) * fraction;
-  const impulse = Math.max(0, ((bx - ax) * nx + (bz - az) * nz) * 1.32 * fraction);
+  const impulse = velocity ? Math.max(0, ((velocity.x - ax) * nx + (velocity.z - az) * nz) * 1.32 * fraction) : 0;
   nudge(a, p.x + nx * correction, p.z + nz * correction, aHeading, ax + nx * impulse, az + nz * impulse, impulse, track);
-  if (!remote) nudge(b, q.x - nx * correction, q.z - nz * correction, bHeading, bx - nx * impulse, bz - nz * impulse, impulse, track);
+  if (!remote && velocity) nudge(b, q.x - nx * correction, q.z - nz * correction, bHeading, velocity.x - nx * impulse, velocity.z - nz * impulse, impulse, track);
 }
 
 function integrate(k: Kart, input: Input, dt: number, track: Circuit, items: boolean) {

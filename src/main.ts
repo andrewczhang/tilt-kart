@@ -5,7 +5,7 @@ import { COLORS, COUNTDOWN, LAPS, LIMIT, clamp, delta, getTrack } from './circui
 import { Controls } from './controls';
 import { cupItinerary, cupSelector, fillCupResults } from './cup-ui';
 import { CUPS, CUP_IDS, cupTrack, isCupId, newCup, nextRound, type Cup } from './cups';
-import { bump, drive, grid, pose, remoteContact, substep, type Kart, type Pose, type RemoteSample } from './drive';
+import { bump, drive, grid, pose, remoteContact, sampleRemote, substep, type Kart, type Pose, type RemoteSample } from './drive';
 import { newDriverId } from './driver-id';
 import { decodeGhost, ghostPose, ghostTimeAt, type Ghost, type Replay, type Standing } from './ghost';
 import { RaceMusic } from './music';
@@ -389,7 +389,7 @@ async function connect(name: string) {
       else if (message.type === 'state') {
         const d = room?.drivers.find(p => p.id === message.id);
         if (d) {
-          if (d.id !== player) remoteSamples.set(d.id, { pose: message.pose, receivedAt: performance.now() });
+          if (d.id !== player) trackRemote(d.id, message.pose);
           Object.assign(d, { pose: message.pose, checkpoint: message.checkpoint, finish: message.finish });
           if (screen === 'results' && message.finish !== null) updateResults();
         }
@@ -410,13 +410,17 @@ function connectionLost(reason: string) {
   menu();
 }
 
+function trackRemote(id: string, pose: Pose) {
+  remoteSamples.set(id, sampleRemote(pose, performance.now(), remoteSamples.get(id), track));
+}
+
 function receiveRoom(next: RoomState) {
   const newRace = room?.start !== next.start;
   for (const d of next.drivers) {
     if (d.id === player) continue;
     if (!d.online) remoteSamples.delete(d.id);
     else if (d.pose.some((n, i) => n !== remoteSamples.get(d.id)?.pose[i])) {
-      remoteSamples.set(d.id, { pose: d.pose, receivedAt: performance.now() });
+      trackRemote(d.id, d.pose);
     }
   }
   room = next;

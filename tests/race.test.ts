@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { LAPS, LENGTH, LIMIT, SECTORS, WIDTH, delta, frame, point } from '../src/circuit';
-import { BOOST_SPEED, PADS, PAD_LENGTH, PAD_WIDTH, TOP_SPEED, bump, drive, grid, pose, remoteContact } from '../src/drive';
+import { BOOST_SPEED, PADS, PAD_LENGTH, PAD_WIDTH, TOP_SPEED, bump, drive, grid, pose, remoteContact, sampleRemote } from '../src/drive';
 import { advance, driver, rank, validPose } from '../src/rules';
 import { centerSteer } from './steering';
 
@@ -120,7 +120,8 @@ test('an online kart bumps away from a remote snapshot without changing it', () 
   const local = Object.assign(grid(0), { s: 0, lane: -.85, yaw: .3, speed: 38 });
   const remote = pose(Object.assign(grid(1), { s: 0, lane: .85, speed: 38 }));
   const before = [...remote];
-  bump(local, remoteContact({ pose: remote, receivedAt: 0 }, 0));
+  const previous = pose(Object.assign(grid(1), { s: -2.28 / LENGTH, lane: .85, speed: 38 }));
+  bump(local, remoteContact(sampleRemote(remote, 60, sampleRemote(previous, 0)), 60));
   assert.deepEqual(remote, before);
   assert.ok(local.lane < -1.5);
   assert.ok(local.slipAngle < -.3);
@@ -130,9 +131,20 @@ test('an online kart bumps away from a remote snapshot without changing it', () 
 test('an online kart does not collide with the render trail of a peer ahead', () => {
   const rear = Object.assign(grid(0), { s: 0, lane: 0, speed: 40 });
   const leader = Object.assign(grid(1), { s: 2.3 / LENGTH, lane: 0, speed: 40 });
-  bump(rear, remoteContact({ pose: pose(leader), receivedAt: 1000 }, 1040));
+  const previous = pose({ ...leader, s: 0 });
+  bump(rear, remoteContact(sampleRemote(pose(leader), 1000, sampleRemote(previous, 942.5)), 1040));
   assert.equal(rear.s, 0);
   assert.equal(rear.speed, 40);
+});
+
+test('an online drift moving away from the local kart does not apply an impulse', () => {
+  const local = Object.assign(grid(0), { s: 0, lane: -1, speed: 32 });
+  const peer = Object.assign(grid(1), { s: 0, lane: 1, speed: 32, yaw: -.4 });
+  const previous = sampleRemote(pose({ ...peer, lane: .4 }), 1000);
+  bump(local, remoteContact(sampleRemote(pose(peer), 1060, previous), 1060));
+  assert.ok(local.lane < -1.6);
+  assert.equal(local.slipAngle, 0);
+  assert.equal(local.speed, 32);
 });
 
 test('room judges from the ordered checkpoints and rejects implausible poses', () => {
