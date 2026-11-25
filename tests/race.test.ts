@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { LAPS, LENGTH, LIMIT, SECTORS, WIDTH, delta, frame, point } from '../src/circuit';
-import { BOOST_SPEED, PADS, PAD_LENGTH, PAD_WIDTH, TOP_SPEED, bump, drive, grid, pose, remoteContact, sampleRemote } from '../src/drive';
+import { LAPS, LENGTH, LIMIT, RED_BASIN, SECTORS, WIDTH, delta, frame, getTrack, point } from '../src/circuit';
+import { BOOST_SPEED, PADS, PAD_LENGTH, PAD_WIDTH, TOP_SPEED, WALL_CLEARANCE, bump, drive, grid, pose, remoteContact, sampleRemote } from '../src/drive';
 import { advance, driver, rank, validPose } from '../src/rules';
+import { TRACK_IDS } from '../src/tracks';
 import { centerSteer } from './steering';
 
 const gas = { steer: 0, brake: false, gas: true };
@@ -80,7 +81,7 @@ test('throttle with a fixed heading changes lanes but does not complete a lap', 
 });
 
 test('a shallow drift glances off a barrier while retaining most speed', () => {
-  const border = WIDTH / 2 - .85;
+  const border = WIDTH / 2 - WALL_CLEARANCE;
   const kart = Object.assign(grid(0), { s: 0, lane: border - .01, yaw: .12, slipAngle: .04, steer: .3, speed: TOP_SPEED });
   const drift = { ...gas, brake: true, steer: .3 };
   drive(kart, drift, dt);
@@ -89,6 +90,32 @@ test('a shallow drift glances off a barrier while retaining most speed', () => {
   drive(kart, drift, dt);
   assert.ok(kart.lane < border);
   assert.ok(kart.speed > TOP_SPEED * .9);
+});
+
+test('throttle and steer into the Red Basin inside wall recover from a backward crawl', () => {
+  const s = .89;
+  const kart = { ...grid(7), s, lane: -6.65, yaw: -2.35, speed: 2.5, steer: -.25 };
+  for (let i = 0; i < 120; i++) {
+    drive(kart, { ...gas, steer: -.25 }, dt);
+    assert.ok(kart.lane >= -RED_BASIN.widthAt(kart.s) / 2 + WALL_CLEARANCE - 1e-9);
+    if (i === 0) assert.ok(Math.cos(kart.yaw + kart.slipAngle) > 0);
+  }
+  assert.ok((kart.s - s) * LENGTH > 10);
+});
+
+test('a kart bump near a wall leaves room for the kart body on every track', () => {
+  for (const id of TRACK_IDS) {
+    const track = getTrack(id);
+    const s = 0;
+    const [, right] = track.laneBounds(s, 0);
+    const a = { ...grid(0, track), s, lane: right - WALL_CLEARANCE - .1, yaw: 1.2, speed: 12 };
+    const b = { ...grid(1, track), s, lane: a.lane - 1.5, yaw: 1.2, speed: 25 };
+    const before = b.lane;
+    bump(a, b, track);
+    assert.ok(b.lane < before, id);
+    const [, wall] = track.laneBounds(a.s, a.lane);
+    assert.ok(wall - a.lane >= WALL_CLEARANCE - 1e-9, id);
+  }
 });
 
 test('successive drift boosts refresh the timer without stacking speed or duration', () => {
