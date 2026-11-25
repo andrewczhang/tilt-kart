@@ -1,4 +1,4 @@
-import { LAPS, RED_BASIN, SECTORS } from './circuit';
+import { LAPS, LIMIT, RED_BASIN, SECTORS } from './circuit';
 import type { Cup } from './cups';
 import { grid, pose, type Pose } from './drive';
 import type { ItemEvent } from './powerups';
@@ -30,7 +30,7 @@ export function rank(drivers: Driver[]) {
 export function validPose(value: unknown, track = RED_BASIN): value is Pose {
   if (!Array.isArray(value) || value.length !== 6 || !value.every(Number.isFinite)) return false;
   const [s, lane, yaw, speed, drift, boost] = value;
-  return s >= -.05 && s <= LAPS + .01 && Math.abs(lane) <= track.width / 2 && Math.abs(yaw) <= 1
+  return s >= -.05 - 67 * LIMIT / (1000 * track.length) && s <= LAPS + .01 && Math.abs(lane) <= track.width / 2 && Math.abs(yaw) <= 3.1416
     && speed >= 0 && speed <= 64 && drift >= 0 && drift <= 1 && boost >= 0 && boost <= 2.2;
 }
 
@@ -44,7 +44,7 @@ export function checkpointAt(s: number, track = RED_BASIN) {
 }
 
 export function advance(d: Driver, p: Pose, elapsed: number, dt: number, track = RED_BASIN) {
-  if (d.finish !== null || p[0] < d.pose[0] || p[0] - d.pose[0] > 67 * (dt + .14) / track.length) return false;
+  if (d.finish !== null || Math.abs(p[0] - d.pose[0]) > 67 * (dt + .14) / track.length) return false;
   d.pose = p;
   const checkpoint = checkpointAt(p[0], track);
   if (checkpoint > d.checkpoint) d.checkpoint = checkpoint;

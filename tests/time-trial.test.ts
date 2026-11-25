@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { getTrack } from '../src/circuit';
-import { drive, MAX_BOOST_SPEED, type Pose } from '../src/drive';
+import { BOOST_SPEED, drive, MAX_BOOST_SPEED, type Pose } from '../src/drive';
 import { newDriverId } from '../src/driver-id';
 import { decodeGhost, encodeGhost, ghostPose, ghostTimeAt, GHOST_INTERVAL, MAX_LAP_MS } from '../src/ghost';
 import { TimeTrial } from '../src/time-trial';
 import { TRACK_IDS } from '../src/tracks';
 import { timeTrialRequest, validSubmission } from '../worker/time-trial';
+import { centerSteer } from './steering';
 
 const input = { gas: true, steer: 0, brake: false };
 const uuid = '00000000-0000-4000-8000-000000000000';
@@ -15,7 +16,9 @@ function runLap(id = TRACK_IDS[0]) {
   const trial = new TimeTrial(getTrack(id), 0);
   trial.step(input, trial.start - 1);
   assert.equal(trial.kart.s, 0);
-  for (let t = trial.start + 16; !trial.finished; t += 16) trial.step(input, t);
+  for (let t = trial.start + 16; !trial.finished; t += 16) {
+    trial.step({ ...input, steer: centerSteer(trial.kart, trial.track) }, t);
+  }
   assert.ok(trial.replay);
   return trial.replay;
 }
@@ -55,12 +58,12 @@ test('a time trial can submit a UUID generated without crypto.randomUUID', () =>
 test('drift release keeps the standard boost speed cap in time trials', () => {
   const track = getTrack();
   const trial = new TimeTrial(track, 0);
-  Object.assign(trial.kart, { speed: MAX_BOOST_SPEED, drift: 1, brakeHeld: true });
-  const racer = { ...trial.kart };
+  Object.assign(trial.kart, { speed: BOOST_SPEED, drift: 1, brakeHeld: true });
+  const racer = { ...trial.kart, speed: 56, turbo: 1.95 };
   drive(racer, input, .016, track);
   trial.step(input, trial.start + 16);
   assert.ok(trial.kart.boost > 1.45);
-  assert.equal(trial.kart.speed, MAX_BOOST_SPEED);
+  assert.equal(trial.kart.speed, BOOST_SPEED);
   assert.ok(racer.speed > MAX_BOOST_SPEED);
 });
 
@@ -79,8 +82,9 @@ test('long frame gaps advance the lap clock and replay at the clamped physics ra
   const regular = new TimeTrial(track, 0);
   const slowFrames = new TimeTrial(track, 0);
   for (let i = 1; !regular.finished; i++) {
-    regular.step(input, regular.start + i * 50);
-    slowFrames.step(input, slowFrames.start + i * 200);
+    const controls = { ...input, steer: centerSteer(regular.kart, track) };
+    regular.step(controls, regular.start + i * 50);
+    slowFrames.step(controls, slowFrames.start + i * 200);
     assert.equal(slowFrames.elapsed, regular.elapsed);
     assert.equal(slowFrames.kart.s, regular.kart.s);
   }

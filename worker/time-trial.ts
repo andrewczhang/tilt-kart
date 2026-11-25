@@ -19,11 +19,14 @@ export function validSubmission(value: unknown, trackId: TrackId): Submission | 
   const replay = decodeGhost(lapMs, ghost);
   if (!replay) return null;
   for (const [i, [s, lane, yaw, speed, drift, boost]] of replay.poses.entries()) {
-    if (Math.abs(lane) > track.width / 2 || Math.abs(yaw) > 1 || speed < 0 || speed > MAX_BOOST_SPEED
+    if (Math.abs(lane) > track.width / 2 || Math.abs(yaw) > 3.1416 || speed < 0 || speed > MAX_BOOST_SPEED
       || drift < 0 || drift > 1 || boost < 0 || boost > 1.5) return null;
     if (!i) continue;
     const dt = (Math.min(i * GHOST_INTERVAL, lapMs) - (i - 1) * GHOST_INTERVAL) / 1000;
-    if (s - replay.poses[i - 1][0] > MAX_BOOST_SPEED * dt / track.length + GHOST_PROGRESS_QUANTUM) return null;
+    const [before, beforeLane] = replay.poses[i - 1];
+    if (s - before > 2 * MAX_BOOST_SPEED * dt / track.length + GHOST_PROGRESS_QUANTUM) return null;
+    const distance = track.point(before, beforeLane).distanceTo(track.point(s, lane));
+    if (distance > MAX_BOOST_SPEED * dt + 2 * GHOST_PROGRESS_QUANTUM * track.length + .01) return null;
   }
   return { driverId, name: trimmed, lapMs, ghost };
 }

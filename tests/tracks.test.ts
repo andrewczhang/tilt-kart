@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { LocalRace } from '../src/bots';
 import { getTrack, LAPS, SECTORS, SAMPLES, delta } from '../src/circuit';
-import { drive, grid, PAD_LENGTH, PAD_WIDTH, pose } from '../src/drive';
+import { bump, drive, grid, PAD_LENGTH, PAD_WIDTH, pose } from '../src/drive';
 import { advance, checkpointAt, driver, validPose } from '../src/rules';
 import { DEFAULT_TRACK, isTrackId, TRACK_IDS } from '../src/tracks';
+import { centerSteer } from './steering';
 
 test('eight circuits have separate drivable closed courses, checkpoints and pads', () => {
   assert.equal(getTrack().id, DEFAULT_TRACK);
@@ -38,7 +39,7 @@ test('eight circuits have separate drivable closed courses, checkpoints and pads
     }
     let updates = 0;
     while (kart.s < LAPS && updates++ < 10800) {
-      const steer = Math.max(-1, Math.min(1, -kart.lane * .35));
+      const steer = centerSteer(kart, track);
       drive(kart, { steer, brake: false, gas: true }, 1 / 60, track);
       if (updates % 4 === 0 || kart.s >= LAPS) {
         const p = pose(kart);
@@ -54,9 +55,17 @@ test('eight circuits have separate drivable closed courses, checkpoints and pads
 
 test('Apex Arena crosses itself at two separated heights', () => {
   const track = getTrack('arena');
-  const frames = Array.from({ length: SAMPLES }, (_, i) => track.frame(i / SAMPLES));
+  const frames = Array.from({ length: SAMPLES }, (_, i) => ({ s: i / SAMPLES, ...track.frame(i / SAMPLES) }));
   const crossing = frames.filter(p => Math.hypot(p.x, p.z) < 2);
   assert.ok(crossing.some(low => crossing.some(high => high.y - low.y > 18)));
+  const pair = crossing.flatMap(low => crossing.map(high => ({ low, high }))).find(({ low, high }) =>
+    high.y - low.y > 18 && Math.hypot(high.x - low.x, high.z - low.z) < 2.65);
+  assert.ok(pair);
+  const low = { ...grid(0, track), s: pair.low.s, lane: 0, speed: 25 };
+  const high = { ...grid(1, track), s: pair.high.s, lane: 0, speed: 25 };
+  const before = [{ ...low }, { ...high }];
+  bump(low, high, track);
+  assert.deepEqual([low, high], before);
 });
 
 test('a local race uses its selected track for every entrant', () => {
@@ -66,7 +75,7 @@ test('a local race uses its selected track for every entrant', () => {
   race.room.drivers.forEach(d => assert.deepEqual(d.pose, pose(grid(d.slot, track))));
   const dt = 1 / 60;
   for (let frame = 1; frame <= 7200 && !race.room.complete; frame++) {
-    const steer = Math.max(-1, Math.min(1, -race.kart.lane * .35));
+    const steer = centerSteer(race.kart, track);
     race.step({ gas: true, brake: false, steer }, dt, frame * dt * 1000);
     race.room.drivers.forEach(d => {
       assert.ok(validPose(d.pose, track));

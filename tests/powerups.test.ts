@@ -14,6 +14,17 @@ import {
 } from '../src/powerups';
 import { advance, driver, validPose } from '../src/rules';
 
+test('a 15 fps turbo frame picks up a box crossed between its endpoints', () => {
+  const state = new PowerupState();
+  const box = state.boxes[0];
+  state.boxes[1].cooldown = 1;
+  const before = { s: box.s - 2.6 / LENGTH, lane: box.lane + .6 };
+  const kart = { ...grid(0), s: box.s + .9 / LENGTH, lane: box.lane + 2.2, speed: 60 };
+  const events: ItemEvent[] = [];
+  state.step(1 / 15, 'p1', kart, [], 1, 1, true, { emit: event => events.push(event) }, () => .1, undefined, before);
+  assert.deepEqual(events, [{ kind: 'pickup', box: box.id }]);
+});
+
 test('driving through an item box starts the roulette, awards an item, and respawns after cooldown', () => {
   const state = new PowerupState();
   const kart = grid(0);
@@ -201,6 +212,17 @@ test('starred opponent bumps local kart into a spin-out', () => {
     { id: 'p2', name: 'P2', slot: 1, pose: pose(rival) }
   ], 1, 2, false);
   assert.ok(local.spin > 1);
+});
+
+test('a starred kart spins out a bot on side contact inside the bump radius', () => {
+  const state = new PowerupState();
+  const kart = { ...grid(0), s: .4, lane: 0, star: STAR_DURATION };
+  const bot = { ...grid(1), s: kart.s, lane: 2.2 };
+  const hits: string[] = [];
+  state.step(1 / 60, 'p1', kart, [
+    { id: 'bot', name: 'Bot', slot: 1, pose: pose(bot) }
+  ], 1, 2, false, { onActorHit: id => hits.push(id) });
+  assert.deepEqual(hits, ['bot']);
 });
 
 test('fresh peels hit pursuing bots, spin-outs preserve held items, and homing skips finished racers', () => {

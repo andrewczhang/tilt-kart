@@ -1,5 +1,5 @@
 import { COLORS, LAPS, LIMIT, RED_BASIN, clamp, delta, getTrack, mix, wrap, type Circuit } from './circuit';
-import { drive, grid, pose, type Input, type Kart } from './drive';
+import { bump, drive, grid, pose, substep, type Input, type Kart } from './drive';
 import { cupTrack, scoreRound, type Cup } from './cups';
 import { advance, driver, type Driver, type RoomState } from './rules';
 
@@ -59,7 +59,7 @@ export class BotPilot {
     this.skill = tuning[difficulty];
     this.line = racingLine(track);
     this.phase = slot * 2.4;
-    this.safeLane = track.width / 2 - 1.65;
+    this.safeLane = track.width / 2 - 2.6;
   }
 
   private traffic(kart: Kart, racers: Driver[]) {
@@ -149,8 +149,12 @@ export class BotPilot {
     const desiredPace = skill.pace - slot * .21 - severity * (this.difficulty === 'Hard' ? 2.8 : 4.6) - mistake;
     const rivals = this.traffic(kart, racers);
     const { target, pace, following, maxProgress } = this.position(kart, time, clamp(lineTarget, -safeLane, safeLane), desiredPace, rivals);
-    const bend = clamp(delta(track.frame(kart.s + .004).heading - track.frame(kart.s).heading, 2 * Math.PI) / .21, -1, 1);
-    let steer = clamp((target - kart.lane) * .48 + bend * .34, -1, 1);
+    const herePoint = track.point(kart.s, kart.lane);
+    const lookahead = this.maneuver ? 4 + kart.speed * .08 : 5 + kart.speed * .22;
+    const aim = track.point(kart.s + lookahead / track.length, clamp(target, -safeLane, safeLane));
+    const bearing = Math.atan2(aim.x - herePoint.x, aim.z - herePoint.z);
+    const error = delta(bearing - track.frame(kart.s).heading - kart.yaw, 2 * Math.PI);
+    let steer = clamp(error * 3, -1, 1);
     const direction = Math.sign(here.bend);
     const space = safeLane - kart.lane * direction;
     const startingDrift = !this.maneuver && !following && time >= this.driftReady && kart.boost === 0 && kart.speed >= 28
@@ -162,18 +166,14 @@ export class BotPilot {
     }
     const drifting = !this.maneuver && !following && time < this.driftUntil && safeLane - kart.lane * this.driftSign > 1.05
       && this.canShift(kart, kart.lane + this.driftSign * 2.2, rivals);
-    if (drifting) steer = this.driftSign * clamp(steer * this.driftSign, .33, .52);
+    if (drifting) steer = this.driftSign * clamp(steer * this.driftSign, .27, .52);
     else this.driftUntil = 0;
-    if (maxProgress !== undefined) steer = Math.sign(target - kart.lane) * Math.max(.85, Math.abs(steer));
     const heavyBrake = severity > 1.08 && kart.speed > pace + 5 && Math.abs(steer) < .22;
     return { steer: following ? clamp(steer, -.19, .19) : steer, gas: kart.speed < pace, brake: following || drifting || heavyBrake, maxProgress };
   }
 }
 
-function stepRacer(entry: Driver, kart: Kart, input: Input, dt: number, elapsed: number, track: Circuit) {
-  if (entry.finish !== null) return false;
-  const before = kart.s;
-  drive(kart, input, dt, track);
+function judgeRacer(entry: Driver, kart: Kart, before: number, dt: number, elapsed: number, track: Circuit) {
   const crossing = kart.s > LAPS ? (LAPS - before) / (kart.s - before) : 1;
   kart.s = Math.min(kart.s, LAPS);
   const next = pose(kart);
@@ -186,7 +186,7 @@ export class LocalRace {
   readonly human: Driver;
   readonly kart: Kart;
   readonly room: RoomState;
-  private readonly bots: { entry: Driver; kart: Kart; pilot: BotPilot }[];
+  private readonly field: { entry: Driver; kart: Kart; pilot?: BotPilot }[];
 
   private readonly track: Circuit;
 
@@ -194,18 +194,20 @@ export class LocalRace {
     const track = this.track = cup ? getTrack(cupTrack(cup)) : singleTrack;
     this.human = driver('solo', racers === 1 ? 'Practice' : 'Player', racers - 1, track);
     this.kart = grid(this.human.slot, track);
-    this.bots = names.slice(0, racers - 1).map((name, slot) => ({
+    const bots = names.slice(0, racers - 1).map((name, slot) => ({
       entry: driver(`bot-${slot}`, `${name} (bot)`, slot, track), kart: grid(slot, track),
       pilot: new BotPilot(track, slot, difficulty),
     }));
-    this.room = { host: this.human.id, start, complete: false, track: track.id, cup, drivers: [...this.bots.map(bot => bot.entry), this.human] };
+    this.field = [...bots, { entry: this.human, kart: this.kart }];
+    this.room = { host: this.human.id, start, complete: false, track: track.id, cup, drivers: this.field.map(racer => racer.entry) };
   }
 
   hitBot(id: string, duration = 1.15) {
-    const bot = this.bots.find(b => b.entry.id === id);
+    const bot = this.field.find(({ entry }) => entry !== this.human && entry.id === id);
     if (!bot || bot.kart.spin > 0) return;
     bot.kart.spin = duration;
     bot.kart.boost = 0;
+    bot.kart.turbo = 0;
     bot.kart.drift = 0;
     bot.kart.speed = Math.min(bot.kart.speed, 14);
   }
@@ -215,14 +217,25 @@ export class LocalRace {
     const end = Math.min(elapsed, LIMIT);
     const raceDt = Math.max(0, Math.min(dt, (end - Math.max(0, elapsed - dt * 1000)) / 1000));
     let changed = false;
-    if (raceDt > 0) {
-      const botInputs = this.bots.map(({ kart, pilot, entry }) => entry.finish === null ? pilot.input(kart, end, this.room.drivers) : undefined);
-      changed = stepRacer(this.human, this.kart, input, raceDt, end, this.track);
-      for (const [i, { entry, kart }] of this.bots.entries()) {
-        const controls = botInputs[i];
-        if (controls && stepRacer(entry, kart, controls, raceDt, end, this.track)) changed = true;
+    let time = end - raceDt * 1000;
+    substep(raceDt, step => {
+      time += step * 1000;
+      const racing = this.field.filter(({ entry }) => entry.finish === null);
+      const before = racing.map(({ kart, pilot }) => {
+        const s = kart.s;
+        drive(kart, pilot?.input(kart, time, this.room.drivers) ?? input, step, this.track);
+        return s;
+      });
+      for (let i = 0; i < racing.length; i++) {
+        for (let j = i + 1; j < racing.length; j++) {
+          const a = racing[i].kart, b = racing[j].kart;
+          if (a.star <= 0 && b.star <= 0) bump(a, b, this.track);
+        }
       }
-    }
+      for (const [i, { entry, kart }] of racing.entries()) {
+        if (judgeRacer(entry, kart, before[i], step, time, this.track)) changed = true;
+      }
+    });
     this.room.complete = elapsed >= LIMIT || this.room.drivers.every(entry => entry.finish !== null);
     if (this.room.complete && this.room.cup) this.room.cup = scoreRound(this.room.cup, this.room.drivers);
     return changed || this.room.complete;

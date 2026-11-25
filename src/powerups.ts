@@ -1,5 +1,5 @@
 import { RED_BASIN, clamp, delta, wrap, type Circuit } from './circuit';
-import type { Kart, Pose } from './drive';
+import { kartContactDistance, type Kart, type Pose } from './drive';
 
 export type PowerupId = 'turbo' | 'banana' | 'shell' | 'homing' | 'star';
 
@@ -131,6 +131,22 @@ function trackDistance(sA: number, sB: number, length: number) {
   return Math.abs(delta(wrap(sA) - wrap(sB))) * length;
 }
 
+type TrackPosition = Pick<Kart, 's' | 'lane'>;
+
+function crossesBox(from: TrackPosition, to: TrackPosition, box: TrackPosition, length: number) {
+  const travel = (to.s - from.s) * length;
+  const start = delta((from.s + to.s) / 2 - box.s) * length - travel / 2;
+  const axis = (offset: number, movement: number, halfWidth: number) => {
+    if (movement === 0) return Math.abs(offset) < halfWidth ? [0, 1] : [1, 0];
+    const a = (-halfWidth - offset) / movement;
+    const b = (halfWidth - offset) / movement;
+    return [Math.min(a, b), Math.max(a, b)];
+  };
+  const [enterS, exitS] = axis(start, travel, 2.2);
+  const [enterLane, exitLane] = axis(from.lane - box.lane, to.lane - from.lane, 1.85);
+  return Math.max(0, enterS, enterLane) < Math.min(1, exitS, exitLane);
+}
+
 function findAheadTarget(localId: string, localS: number, actors: RaceActor[]): string | undefined {
   let bestId: string | undefined;
   let bestGap = Infinity;
@@ -248,7 +264,8 @@ export class PowerupState {
     solo: boolean,
     cb: PowerupCallbacks = {},
     rand: () => number = Math.random,
-    track: Circuit = RED_BASIN
+    track: Circuit = RED_BASIN,
+    before: TrackPosition = local
   ) {
     for (const b of this.boxes) {
       if (b.cooldown > 0) b.cooldown = Math.max(0, b.cooldown - dt);
@@ -288,7 +305,7 @@ export class PowerupState {
     // Box pickup check for local kart
     for (const b of this.boxes) {
       if (b.cooldown > 0) continue;
-      if (trackDistance(local.s, b.s, track.length) < 2.2 && Math.abs(local.lane - b.lane) < 1.85) {
+      if (crossesBox(before, local, b, track.length)) {
         b.cooldown = BOX_RESPAWN;
         cb.emit?.({ kind: 'pickup', box: b.id });
         if (!this.held && !this.rolling) {
@@ -384,21 +401,23 @@ export class PowerupState {
 
     // Star-powered bump check (local starred bumps bots; remote starred bumps local)
     if (local.star > 0 && cb.onActorHit) {
+      const point = track.point(local.s, local.lane);
       for (const a of actors) {
         if (a.id === localId || a.online === false || a.finish != null) continue;
         if (this.fxOf(a.id).spin > 0) continue;
-        if (trackDistance(local.s, a.pose[0], track.length) < 2.6 && Math.abs(local.lane - a.pose[1]) < 1.9) {
+        if (kartContactDistance(point, track.point(a.pose[0], a.pose[1])) !== null) {
           this.effects.set(a.id, { star: 0, spin: SPIN_DURATION });
           cb.onActorHit(a.id, 'star');
           cb.sfx?.('hit');
         }
       }
     } else if (local.star <= 0 && local.spin <= 0) {
+      const point = track.point(local.s, local.lane);
       for (const a of actors) {
         if (a.id === localId || a.online === false) continue;
         const fx = this.effects.get(a.id);
         if (!fx || fx.star <= 0) continue;
-        if (trackDistance(local.s, a.pose[0], track.length) < 2.6 && Math.abs(local.lane - a.pose[1]) < 1.9) {
+        if (kartContactDistance(point, track.point(a.pose[0], a.pose[1])) !== null) {
           this.hitLocal(localId, local, 'star', undefined, cb);
           break;
         }
@@ -414,6 +433,7 @@ export class PowerupState {
     if (local.spin > 0) return;
     local.spin = SPIN_DURATION;
     local.boost = 0;
+    local.turbo = 0;
     local.drift = 0;
     local.speed = Math.min(local.speed, 14);
     const label = item === 'banana' ? 'SLIPPED ON PEEL' : item === 'homing' ? 'HIT BY HOMING SHELL' : item === 'star' ? 'BUMPED BY STAR' : 'HIT BY SHELL';
@@ -428,7 +448,8 @@ export class PowerupState {
     this.held = null;
 
     if (item === 'turbo') {
-      local.boost = Math.max(local.boost, 1.95);
+      local.turbo = 1.95;
+      local.boost = Math.max(local.boost, local.turbo);
       local.speed = Math.max(local.speed, 54);
       this.announce('TURBO BOOST', POWERUPS.turbo.color, 1.2);
       cb.sfx?.('turbo');
