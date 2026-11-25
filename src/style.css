@@ -74,7 +74,8 @@ h2.title{font-size:clamp(40px,6.2vw,78px);margin-bottom:18px;line-height:.92}
 .boost i{display:block;height:100%;background:#f47b26;transform-origin:left}
 .touch{position:absolute;inset:auto max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left));display:flex;gap:8px;pointer-events:none}
 .touch button{width:clamp(56px,19vw,112px);height:clamp(56px,20vh,104px);border:2px solid #ffffff59;color:white;background:#233039d9;touch-action:none;user-select:none;pointer-events:auto;font-weight:800}
-.touch #brake{width:clamp(78px,24vw,144px);margin-left:auto;background:#a82e21de}
+.touch #right{margin-left:auto}
+.touch #brake{position:absolute;right:0;bottom:calc(100% + 8px);width:clamp(78px,24vw,144px);background:#a82e21de}
 .rotate{font-weight:800;display:none}
 dialog{max-width:calc(100% - 28px);border:2px solid var(--ink);background:var(--paper);color:var(--ink);padding:20px;box-shadow:6px 6px 0 var(--ink)}
 dialog::backdrop{background:#202b3190}
@@ -119,7 +120,7 @@ dialog h2{margin:0}
  .hud-box em{font-size:clamp(18px,5vw,33px)}
  .hud-box small{font-size:11px}
  .race-clock{flex:1.8}
- .hud-actions{top:calc(max(10px,env(safe-area-inset-top)) + max(63px,var(--map-width) * .8125 + 12px))}
+ .hud-actions{top:calc(max(10px,env(safe-area-inset-top)) + max(84px,var(--map-width) * .8125 + 12px))}
  .poster{inset:auto 0 0;width:100%;min-height:54%;max-height:83%;padding:34px max(22px,env(safe-area-inset-right)) max(20px,env(safe-area-inset-bottom)) max(22px,env(safe-area-inset-left));clip-path:polygon(0 7%,100% 0,100% 100%,0 100%)}
  .poster.compact{padding-top:37px}
  h1.title{font-size:clamp(68px,17vw,122px)}
