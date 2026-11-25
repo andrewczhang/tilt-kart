@@ -1,6 +1,6 @@
 import { LAPS, mix } from './circuit';
 import { readPreference, writePreference } from './preferences';
-import { DEFAULT_TRACK, type TrackId } from './tracks';
+import { DEFAULT_TRACK, TRACKS, type TrackId } from './tracks';
 
 export function formatTime(ms: number) {
   if (!Number.isFinite(ms)) return '—';
@@ -30,7 +30,7 @@ export class RaceTiming {
 
   records(finish: number | null) {
     const best = (key: string, time: number) => {
-      if (this.track !== DEFAULT_TRACK) key += `-${this.track}`;
+      key += `-${this.track}-v${TRACKS[this.track].layoutVersion}`;
       const stored = Number(readPreference(key));
       const previous = Number.isFinite(stored) && stored > 0 ? stored : Infinity;
       if (time > 0 && time < previous) writePreference(key, String(time));
