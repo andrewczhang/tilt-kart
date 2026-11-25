@@ -14,15 +14,15 @@ export class RaceTiming {
   constructor(private track: TrackId = DEFAULT_TRACK) {}
 
   step(before: number, after: number, elapsed: number, duration: number) {
-    for (let lap = Math.max(1, Math.floor(before) + 1); lap < LAPS && after >= lap; lap++) {
+    for (let lap = Math.max(1, Math.floor(before) + 1); lap <= LAPS && after >= lap; lap++) {
       this.crossings[lap] ??= mix(Math.max(0, elapsed - duration), elapsed, (lap - before) / (after - before));
     }
   }
 
-  splits(finish: number | null) {
-    const end = finish === null ? this.crossings.length - 1 : LAPS;
+  splits(finished: boolean) {
+    const end = finished ? LAPS : Math.min(LAPS - 1, this.crossings.length - 1);
     return Array.from({ length: end }, (_, i) => {
-      const start = this.crossings[i], crossing = i + 1 === LAPS ? finish : this.crossings[i + 1];
+      const start = this.crossings[i], crossing = this.crossings[i + 1];
       return start != null && crossing != null ? crossing - start : undefined;
     });
   }
@@ -36,7 +36,7 @@ export class RaceTiming {
       return time > 0 ? Math.min(time, previous) : previous;
     };
     return {
-      lap: best('tilt-kart-best-lap', Math.min(...this.splits(finish).filter(time => time !== undefined))),
+      lap: best('tilt-kart-best-lap', Math.min(...this.splits(finish !== null).filter(time => time !== undefined))),
       race: best('tilt-kart-best-time', finish ?? Infinity),
     };
   }

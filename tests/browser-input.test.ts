@@ -134,7 +134,7 @@ test('race wake lock is acquired, restored on visibility, and released on exit',
   });
 });
 
-test('lap splits use interpolated crossings and finish time, and personal bests persist', () => {
+test('all lap splits use client crossings even when the official finish is later', () => {
   const values = new Map<string, string>();
   withGlobals({
     localStorage: { configurable: true, value: {
@@ -145,15 +145,18 @@ test('lap splits use interpolated crossings and finish time, and personal bests 
     const timing = new RaceTiming();
     timing.step(.9, 1.1, 10_010, 20);
     timing.step(1.9, 2.1, 19_010, 20);
-    assert.deepEqual(timing.splits(30_000), [10_000, 9_000, 11_000]);
-    assert.deepEqual(timing.records(30_000), { lap: 9_000, race: 30_000 });
+    timing.step(2.9, 3.1, 30_010, 20);
+    assert.deepEqual(timing.splits(true), [10_000, 9_000, 11_000]);
+    assert.deepEqual(timing.splits(false), [10_000, 9_000]);
+    assert.deepEqual(timing.records(30_800), { lap: 9_000, race: 30_800 });
     const retry = new RaceTiming();
-    assert.deepEqual(retry.records(null), { lap: 9_000, race: 30_000 });
+    assert.deepEqual(retry.records(null), { lap: 9_000, race: 30_800 });
   });
 });
 
 test('rejoining mid-race does not invent lap splits before the first observed crossing', () => {
   const timing = new RaceTiming();
   timing.step(1.9, 2.1, 19_010, 20);
-  assert.deepEqual(timing.splits(30_000), [undefined, undefined, 11_000]);
+  timing.step(2.9, 3.1, 30_010, 20);
+  assert.deepEqual(timing.splits(true), [undefined, undefined, 11_000]);
 });

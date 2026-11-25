@@ -390,7 +390,7 @@ function results() {
   wake.setActive(false);
   const racers = localRace?.racers;
   const rematch = !localRace && room?.host === player;
-  const splits = timing.splits(finish), records = timing.records(finish);
+  const splits = timing.splits(finish !== null), records = timing.records(finish);
   show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet"><p class="identity">Tilt Kart / ${track.name}</p>
     <h2 class="title" id="result-title">${racers === 1 ? 'Practice results' : 'Race results'}</h2>
     ${me ? `<p class="finish-time"><small>Your result</small><strong>${finish === null ? 'DNF' : formatTime(finish)}</strong></p>
@@ -439,8 +439,11 @@ function tick(now: number) {
     } else if (active) {
       drive(local, touch.input(), Math.min(dt, elapsed / 1000), track);
     }
-    if (screen === 'race' && elapsed >= 0) timing.step(before, local.s, Math.min(elapsed, LIMIT), dt * 1000);
     const mine = pose(local);
+    if (screen === 'race' && elapsed >= 0) {
+      const progress = !localRace && mine[0] >= LAPS ? LAPS : local.s;
+      timing.step(before, progress, Math.min(elapsed, LIMIT), dt * 1000);
+    }
     if (!localRace && !room.complete && elapsed >= LIMIT && checkedDeadline !== room.start && socket?.readyState === WebSocket.OPEN) {
       socket.send('status');
       checkedDeadline = room.start;
