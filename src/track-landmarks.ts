@@ -72,7 +72,7 @@ export function landmarks(world: T.Group, track: Circuit) {
           add(s, side * span, -.8, [.56, .62, 8.9], '#433542');
           add(s, side * span, 9.4, [.55, .55, 8.9], '#7e4b4b');
         }
-        add(s, 0, -.78, [span * 2.1, .34, .62], '#68454d');
+        add(s, 0, -2.25, [span * 2.1, .34, .62], '#68454d');
       });
       break;
     case 'logs':

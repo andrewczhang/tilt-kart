@@ -347,8 +347,14 @@ export class View {
     } else {
       const targetDistance = 10.5 + speed * .055 + (boost > 0 ? 1.1 : 0);
       this.followDistance += (targetDistance - this.followDistance) * (this.resetCamera ? 1 : 1 - Math.exp(-dt * 8));
-      const eye = point(s - this.followDistance / this.track.length, lane * .75, 6.1);
-      const focus = point(s, lane, .7);
+      const backS = s - this.followDistance / this.track.length;
+      const branch = this.track.branchAt(s);
+      const onBranch = branch && lane * branch.side > this.track.widthAt(s) / 2;
+      const backLane = onBranch ? this.track.branchAt(backS)?.center ?? lane * .6 : lane * .75;
+      const air = this.track.airHeight(s, speed);
+      const eye = point(backS, backLane, 6.1 + air);
+      if (onBranch) eye.y = Math.max(eye.y, point(s, lane, 5).y);
+      const focus = point(s, lane, .7 + air);
       const ahead = new T.Vector3(focus.x - eye.x, 0, focus.z - eye.z).normalize();
       focus.addScaledVector(ahead, 3.8);
       this.camera.position.copy(eye);
