@@ -1,5 +1,5 @@
 import { getTrack, MAX_ROUTE_PROGRESS_SCALE } from '../src/circuit';
-import { MAX_BOOST_SPEED } from '../src/drive';
+import { MAX_BOOST_SPEED, MAX_STAR_SPEED } from '../src/drive';
 import { decodeGhost, GHOST_INTERVAL, GHOST_PROGRESS_QUANTUM, MAX_GHOST_LENGTH, type Replay, type Standing } from '../src/ghost';
 import { courseLayoutKey, type TrackId } from '../src/tracks';
 
@@ -31,7 +31,15 @@ export function validSubmission(value: unknown, trackId: TrackId): Submission | 
     if (s - before > 2 * MAX_BOOST_SPEED * dt / track.length + GHOST_PROGRESS_QUANTUM) return null;
     const from = track.point(before, beforeLane), to = track.point(s, lane);
     const distance = Math.hypot(to.x - from.x, to.z - from.z);
-    if (distance > MAX_BOOST_SPEED * dt + 2 * GHOST_PROGRESS_QUANTUM * track.length + .01) return null;
+    let flightSpeed = 0;
+    for (const jump of track.jumps ?? []) {
+      if (before - GHOST_PROGRESS_QUANTUM < jump.end && s + GHOST_PROGRESS_QUANTUM >= jump.start) {
+        flightSpeed = Math.max(flightSpeed, track.flightSpeed(jump.start));
+      }
+    }
+    const forwardLimit = Math.max(MAX_BOOST_SPEED, flightSpeed) * dt;
+    const lateralAllowance = flightSpeed ? MAX_STAR_SPEED * dt : 0;
+    if (distance > forwardLimit + lateralAllowance + 2 * GHOST_PROGRESS_QUANTUM * track.length + .01) return null;
   }
   return { driverId, name: trimmed, lapMs, ghost };
 }

@@ -12,6 +12,7 @@ export const PADS = RED_BASIN.pads;
 export const PAD_WIDTH = 3.3;
 export const PAD_LENGTH = 4.4;
 export const MAX_BOOST_SPEED = 56;
+export const MAX_STAR_SPEED = 62;
 export const TOP_SPEED = 42;
 export const BOOST_SPEED = TOP_SPEED * 1.15;
 const TURN = 2 * Math.PI;
@@ -160,7 +161,7 @@ function integrate(k: Kart, input: Input, dt: number, track: Circuit, items: boo
   k.brakeHeld = input.brake;
   const starred = items && k.star > 0;
   const boosting = k.boost > 0;
-  const max = starred ? 62 : items && k.turbo > 0 ? (k.turbo > 1.45 ? 60 : MAX_BOOST_SPEED) : boosting && !input.brake ? BOOST_SPEED : slip ? 35 : input.brake ? 12 : TOP_SPEED;
+  const max = starred ? MAX_STAR_SPEED : items && k.turbo > 0 ? (k.turbo > 1.45 ? 60 : MAX_BOOST_SPEED) : boosting && !input.brake ? BOOST_SPEED : slip ? 35 : input.brake ? 12 : TOP_SPEED;
   const surface = flight ? .22 : track.surfaceAt(k.s, k.lane);
   const slope = flight ? 0 : track.gradeAt(k.s);
   const accel = input.brake && !slip ? -27 * surface : starred ? 32 - k.speed * .25 : boosting || input.gas || slip ? 24 - k.speed * .29 : -8;

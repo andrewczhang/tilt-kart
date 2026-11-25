@@ -50,6 +50,19 @@ test('every track produces a server-valid flying lap with the real driving model
   }
 });
 
+test('accepts a Twin Mesa replay that steers hard across the jump', () => {
+  const trial = new TimeTrial(getTrack('mesa'), 0);
+  for (let t = trial.start + 16; !trial.finished; t += 16) {
+    const { s } = trial.kart;
+    const brake = s >= .4322 && s < .4584;
+    const steer = brake ? .375 : s >= .4634 && s < .4811 ? -1 : centerSteer(trial.kart, trial.track);
+    trial.step({ ...input, brake, steer }, t);
+  }
+  assert.ok(trial.replay);
+  const submission = { ...trial.replay, name: 'Driver', driverId: uuid };
+  assert.deepEqual(validSubmission(submission, trial.track.id), submission);
+});
+
 test('a time trial can submit a UUID generated without crypto.randomUUID', () => {
   const driverId = newDriverId({ getRandomValues: crypto.getRandomValues.bind(crypto) });
   assert.ok(validSubmission({ ...runLap(), name: 'LAN Driver', driverId }, TRACK_IDS[0]));
