@@ -50,6 +50,16 @@ test('every track produces a server-valid flying lap with the real driving model
   }
 });
 
+test('ghosts replay negative lap progress and time the first crossing after backtracking', () => {
+  const positions = [0, -.001, .004, .002, .006, .34, .67, 1];
+  const poses = positions.map(s => [s, 0, 0, 42, 0, 0] as Pose);
+  const ghost = decodeGhost(350, encodeGhost(poses));
+  assert.ok(ghost);
+  assert.ok(ghostPose(ghost, 50)[0] < 0);
+  assert.ok(ghostTimeAt(ghost, .003) < 100);
+  assert.ok(ghostTimeAt(ghost, .005) > 150);
+});
+
 test('accepts a Twin Mesa replay that steers hard across the jump', () => {
   const trial = new TimeTrial(getTrack('mesa'), 0);
   for (let t = trial.start + 16; !trial.finished; t += 16) {
@@ -128,6 +138,25 @@ test('Frostline Pass uses wall time and the same replay at 60 and 15 FPS', () =>
   assert.ok(regular.replay.lapMs <= wall && regular.replay.lapMs > wall - 1000 / 15 - 10);
   assert.ok(validSubmission({ ...slowFrames.replay, name: 'Driver', driverId: uuid }, track.id));
 });
+
+for (const fps of [5, 60]) {
+  test(`Frostline accepts a real lap with backtracking at ${fps} FPS`, () => {
+    const track = getTrack('frostline');
+    const trial = new TimeTrial(track, 0);
+    for (let frame = 0; !trial.finished; frame++) {
+      const elapsed = frame * 1000 / fps;
+      const steer = elapsed >= 8000 && elapsed < 9400 ? 1 : centerSteer(trial.kart, track) * .2;
+      trial.step({ ...input, steer }, trial.start + elapsed);
+    }
+    assert.ok(trial.replay);
+    const ghost = decodeGhost(trial.replay.lapMs, trial.replay.ghost);
+    assert.ok(ghost);
+    assert.equal(ghost.poses.length, Math.ceil(trial.replay.lapMs / GHOST_INTERVAL) + 1);
+    assert.ok(ghost.poses.some(([s], i) => i > 0 && s < ghost.poses[i - 1][0]));
+    const submission = { ...trial.replay, name: 'Driver', driverId: uuid };
+    assert.deepEqual(validSubmission(submission, track.id), submission);
+  });
+}
 
 test('a frame gap longer than one second interrupts the lap without creating a replay', () => {
   const trial = new TimeTrial(getTrack(), 0);
