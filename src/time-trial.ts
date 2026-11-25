@@ -26,7 +26,7 @@ export class TimeTrial {
     this.lastFrame = now;
     const previous = this.elapsed;
     const before = this.snapshot();
-    drive(this.kart, input, dt / 1000, this.track);
+    drive(this.kart, input, dt / 1000, this.track, 'time-trial');
     let after = this.snapshot();
     let elapsed = previous + dt;
     if (after[0] >= 1) {

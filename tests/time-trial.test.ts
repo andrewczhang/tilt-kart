@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { getTrack } from '../src/circuit';
-import { MAX_BOOST_SPEED, type Pose } from '../src/drive';
+import { drive, MAX_BOOST_SPEED, type Pose } from '../src/drive';
 import { newDriverId } from '../src/driver-id';
 import { decodeGhost, encodeGhost, ghostPose, ghostTimeAt, GHOST_INTERVAL, MAX_LAP_MS } from '../src/ghost';
 import { TimeTrial } from '../src/time-trial';
@@ -50,6 +50,18 @@ test('every track produces a server-valid flying lap with the real driving model
 test('a time trial can submit a UUID generated without crypto.randomUUID', () => {
   const driverId = newDriverId({ getRandomValues: crypto.getRandomValues.bind(crypto) });
   assert.ok(validSubmission({ ...runLap(), name: 'LAN Driver', driverId }, TRACK_IDS[0]));
+});
+
+test('drift release keeps the standard boost speed cap in time trials', () => {
+  const track = getTrack();
+  const trial = new TimeTrial(track, 0);
+  Object.assign(trial.kart, { speed: MAX_BOOST_SPEED, drift: 1, brakeHeld: true });
+  const racer = { ...trial.kart };
+  drive(racer, input, .016, track);
+  trial.step(input, trial.start + 16);
+  assert.ok(trial.kart.boost > 1.45);
+  assert.equal(trial.kart.speed, MAX_BOOST_SPEED);
+  assert.ok(racer.speed > MAX_BOOST_SPEED);
 });
 
 test('runs time out after the simulated time limit without a replay', () => {
