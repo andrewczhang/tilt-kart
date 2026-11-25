@@ -9,7 +9,7 @@ import { View } from './scene';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const ui = $('interface');
-const touch = new Controls(updateTilt);
+const touch = new Controls(updateTilt, () => screen === 'race');
 const motor = new Motor();
 const route = /^\/r\/([0-9a-z]{8})\/?$/i.exec(location.pathname);
 let code = route?.[1].toUpperCase() ?? '';

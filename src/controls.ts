@@ -12,9 +12,9 @@ export class Controls {
   private tiltListener = false;
   touch = matchMedia('(pointer: coarse)').matches;
 
-  constructor(private change: () => void) {
+  constructor(private change: () => void, racing: () => boolean) {
     addEventListener('keydown', e => {
-      if (e.target instanceof HTMLInputElement) return;
+      if (!racing() || e.target instanceof HTMLInputElement || (e.key === ' ' && e.target instanceof HTMLButtonElement)) return;
       if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(e.key)) e.preventDefault();
       this.keys.add(e.key.toLowerCase());
     });
