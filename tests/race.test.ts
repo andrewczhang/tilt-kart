@@ -116,6 +116,19 @@ test('a rear-end bump separates both karts and transfers speed to the leading ka
   assert.deepEqual([rear.speed, lead.speed], speeds);
 });
 
+test('a kart bumped onto a boost pad activates it on entry only', () => {
+  const pad = PADS[0];
+  const kart = Object.assign(grid(0), { s: pad.s, lane: pad.lane - PAD_WIDTH / 2 - .05 });
+  const other = Object.assign(grid(1), { s: pad.s, lane: kart.lane - 2 });
+  bump(kart, other);
+  assert.ok(kart.lane > pad.lane - PAD_WIDTH / 2);
+  const entering = kart.boost;
+  assert.ok(entering > 1);
+  assert.equal(other.boost, 0);
+  drive(kart, { ...gas, gas: false }, dt);
+  assert.ok(kart.boost < entering);
+});
+
 test('an online kart bumps away from a remote snapshot without changing it', () => {
   const local = Object.assign(grid(0), { s: 0, lane: -.85, yaw: .3, speed: 38 });
   const remote = pose(Object.assign(grid(1), { s: 0, lane: .85, speed: 38 }));

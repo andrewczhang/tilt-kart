@@ -42,6 +42,12 @@ function entersPad(pad: BoostPad, previous: number, previousLane: number, k: Kar
   return Math.min(a, b) <= halfWidth && Math.max(a, b) >= -halfWidth;
 }
 
+function activatePads(k: Kart, previous: number, previousLane: number, track: Circuit) {
+  for (const p of track.pads) {
+    if (entersPad(p, previous, previousLane, k, track)) k.boost = Math.max(k.boost, 1.38);
+  }
+}
+
 export function substep(dt: number, step: (dt: number) => void) {
   const count = Math.ceil(dt / STEP - 1e-9);
   for (let i = 0; i < count; i++) step(dt / count);
@@ -66,7 +72,9 @@ function project(k: Kart, x: number, z: number, heading: number, track: Circuit)
 }
 
 function nudge(k: Kart, x: number, z: number, heading: number, vx: number, vz: number, impulse: number, track: Circuit) {
+  const previous = k.s, previousLane = k.lane;
   project(k, x, z, heading, track);
+  activatePads(k, previous, previousLane, track);
   if (impulse > 0) {
     k.speed = Math.min(Math.max(BOOST_SPEED, k.speed), Math.hypot(vx, vz));
     k.slipAngle = k.speed ? delta(Math.atan2(vx, vz) - heading, TURN) : 0;
@@ -172,7 +180,5 @@ function integrate(k: Kart, input: Input, dt: number, track: Circuit, items: boo
     }
   }
   k.s = Math.min(input.maxProgress ?? Infinity, k.s);
-  for (const p of track.pads) {
-    if (entersPad(p, previous, previousLane, k, track)) k.boost = Math.max(k.boost, 1.38);
-  }
+  activatePads(k, previous, previousLane, track);
 }
