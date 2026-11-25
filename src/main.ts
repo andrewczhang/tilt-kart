@@ -6,40 +6,67 @@ import { Controls } from './controls';
 import { drive, grid, pose, type Kart, type Pose } from './drive';
 import { RaceMusic } from './music';
 import { readPreference, writePreference } from './preferences';
-import { driver, rank, type Driver, type RoomState, type ServerMessage } from './rules';
+import { rank, type Driver, type RoomState, type ServerMessage } from './rules';
 import { View } from './scene';
 import { drawTrackMap, trackSelector, trackTag } from './track-ui';
 import { DEFAULT_TRACK, isTrackId, type TrackId } from './tracks';
+import { formatTime, RaceTiming } from './timing';
+import { RaceWakeLock } from './wake';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const ui = $('interface');
-const touch = new Controls(updateTilt, () => screen === 'race');
+const touch = new Controls(updateTilt, () => screen === 'race' && !$<HTMLDialogElement>('exit-dialog')?.open);
 const motor = new Motor();
 const music = new RaceMusic(() => motor.start(), motor.muted);
+const wake = new RaceWakeLock();
 const route = /^\/r\/([0-9a-z]{8})\/?$/i.exec(location.pathname);
 let code = route?.[1].toUpperCase() ?? '';
-let screen: 'home' | 'bots' | 'join' | 'lobby' | 'race' | 'spectate' | 'results' = code ? 'join' : 'home';
+let screen: 'home' | 'bots' | 'controls' | 'join' | 'lobby' | 'race' | 'spectate' | 'results' = code ? 'join' : 'home';
 let socket: WebSocket | undefined;
 let heartbeat = 0, clock = 0, sent = 0;
 let player = '', local = grid(0), room: RoomState | undefined;
 let localRace: LocalRace | undefined;
+let timing = new RaceTiming();
+let timingKey = '';
 let issue = '', starting = false, joining = false;
 let followed = '', checkedDeadline: number | null = null;
 let view: View;
 let practiceTrack: TrackId = DEFAULT_TRACK;
 let track = getTrack();
 const remotes = new Map<string, Pose>();
-const preview = driver('preview', '', 0);
 const show = (html: string) => { ui.innerHTML = html; };
 const button = (id: string, label: string, alt = false) => `<button id="${id}" class="action${alt ? ' alt' : ''}" type="button">${label}</button>`;
 const doOn = (id: string, fn: () => void) => { $(id).onclick = fn; };
 const identity = '<p class="identity">Tilt Kart</p>';
-const doAfterGesture = () => {
-  motor.start();
-  if (touch.touch) void touch.enableTilt();
-};
-const notes = () => touch.touch ? 'Rotate to landscape. Hold your phone like a wheel. Automatic throttle.' : 'Drive with WASD or arrow keys. Hold brake and turn to drift; release for a boost.';
 const tokenKey = () => `tilt-kart-room-${code}`;
+const notes = () => touch.touch ? 'Rotate to landscape. Hold your phone like a wheel. Automatic throttle.' : 'Drive with WASD or arrow keys. Brake with S, ↓ or Space. Hold brake and turn to drift; release for a boost.';
+const phoneSetup = () => touch.touch ? `<div class="phone-setup">
+  <p class="rotate">Turn sideways for a wider view.</p>
+  ${button('tilt', 'Enable tilt', true)}<p id="tilt-status" role="status">Tilt or use Left / Right to steer.</p>
+  </div>` : '';
+
+function bindTilt() {
+  if (!$('tilt')) return;
+  doOn('tilt', () => {
+    if (screen === 'race') $('tilt').blur();
+    void touch.enableTilt();
+  });
+  updateTilt();
+}
+
+function prepareLocal(racers: number, back: () => void) {
+  motor.start();
+  if (!touch.touch) { startLocal(racers); return; }
+  screen = 'controls';
+  show(`<section class="poster compact">${identity}<h2 class="title">Phone controls</h2>
+    ${phoneSetup()}
+    <p class="help">Hold your phone like a wheel. The kart accelerates automatically.</p>
+    <div class="actions">${button('start', 'Start race')}${button('back', 'Back', true)}</div>
+    </section>${trackTag(track)}`);
+  bindTilt();
+  doOn('start', () => { motor.start(); startLocal(racers); });
+  doOn('back', back);
+}
 
 function displayTrack(id: TrackId) {
   track = getTrack(id);
@@ -66,7 +93,7 @@ function menu() {
     });
     doOn('create', () => { screen = 'join'; menu(); });
     doOn('bots', () => { screen = 'bots'; menu(); });
-    doOn('solo', () => { doAfterGesture(); startLocal(1); });
+    doOn('solo', () => prepareLocal(1, home));
     return;
   }
   if (screen === 'bots') {
@@ -76,14 +103,13 @@ function menu() {
     }).join('');
     show(`<section class="poster compact">${identity}<h2 class="title">Vs bots</h2>
       <form class="setup" id="bot-setup"><label for="racers">Total racers</label><select id="racers" name="racers">${options}</select>
-      <div class="actions"><button class="action" type="submit">Start race</button>${button('back', 'Back', true)}</div></form>
+      <div class="actions"><button class="action" type="submit">${touch.touch ? 'Phone controls' : 'Start race'}</button>${button('back', 'Back', true)}</div></form>
       <p class="help">${notes()}</p></section>${trackTag(track)}`);
     const setup = $<HTMLFormElement>('bot-setup');
     setup.onsubmit = e => {
       e.preventDefault();
       const racers = Number(new FormData(setup).get('racers'));
-      doAfterGesture();
-      startLocal(racers);
+      prepareLocal(racers, () => { screen = 'bots'; menu(); });
     };
     doOn('back', home);
     return;
@@ -93,19 +119,21 @@ function menu() {
     show(`<section class="poster compact">${identity}<h2 class="title">${rejoining ? 'Rejoin room' : code ? 'Join the grid' : 'Set up a race'}</h2>
       <form class="setup" id="setup"><label for="driver">Driver name</label>
       <input id="driver" maxlength="20" autocomplete="nickname" required placeholder="Your name">
+      ${phoneSetup()}
       <div class="actions"><button class="action" id="join" type="submit">${rejoining ? 'Rejoin room' : code ? 'Join room' : 'Create room'}</button>${button('back', 'Back', true)}</div></form>
-      <p class="notice" role="status" id="notice"></p><p class="help">${notes()}</p></section>${code ? '' : trackTag(track)}`);
+      <p class="notice" role="status" id="notice"></p>${touch.touch ? '' : `<p class="help">${notes()}</p>`}</section>${code ? '' : trackTag(track)}`);
     $<HTMLInputElement>('driver').value = readPreference('tilt-kart-name') ?? '';
     $('notice').textContent = issue;
     $<HTMLFormElement>('setup').onsubmit = e => {
       e.preventDefault();
-      if (joining) return;
+      if (joining || touch.tiltStatus === 'waiting') return;
       const name = $<HTMLInputElement>('driver').value.trim();
       if (!name) { $('notice').textContent = 'Enter a name first.'; return; }
-      doAfterGesture();
+      motor.start();
       void connect(name);
     };
     doOn('back', home);
+    bindTilt();
     return;
   }
   if (screen === 'lobby' && room) {
@@ -115,6 +143,7 @@ function menu() {
     show(`<section class="poster compact">${identity}<h2 class="title">Starting grid</h2>
       <div id="room-code">Room ${code} · ${room.drivers.length}/8 drivers</div><ol class="list" id="roster"></ol>
       ${isHost ? trackSelector(track.id) : `<p class="lobby-track">Track: <strong>${track.name}</strong></p>`}
+      ${phoneSetup()}
       <div class="actions">${button('share', 'Invite friends', true)}${isHost ? button('start', 'Start race') : ''}${button('leave', 'Leave', true)}</div>
       <p class="notice" id="notice" role="status"></p></section>${trackTag(track)}`);
     if (isHost) {
@@ -125,6 +154,7 @@ function menu() {
     fillList($('roster'), [...room.drivers].sort((a, b) => a.slot - b.slot), d => d.id === room?.host ? 'Host' : '');
     doOn('leave', home);
     doOn('share', () => void share());
+    bindTilt();
     if (isHost) doOn('start', () => {
       touch.calibrate();
       motor.start();
@@ -161,6 +191,7 @@ function fillList(list: HTMLElement, drivers: Driver[], status: (d: Driver) => s
 
 function close() {
   music.stop();
+  wake.setActive(false);
   clearInterval(heartbeat);
   const prev = socket;
   socket = undefined;
@@ -264,10 +295,22 @@ function startLocal(racers: number) {
 }
 
 function updateTilt() {
-  if (screen !== 'race') return;
-  const enabled = touch.tilted;
-  $('tilt').textContent = enabled ? 'Recenter tilt' : 'Enable tilt';
-  $('left').hidden = $('right').hidden = enabled;
+  const tilt = $<HTMLButtonElement>('tilt');
+  if (!tilt) return;
+  const status = touch.tiltStatus;
+  tilt.textContent = status === 'ready' ? 'Recenter tilt' : 'Enable tilt';
+  tilt.disabled = status === 'waiting';
+  set('tilt-status', {
+    idle: screen === 'race' ? '' : 'Tilt or use Left / Right to steer.',
+    waiting: 'Waiting for motion data…',
+    denied: 'Motion access denied. Use Left / Right to steer.',
+    unavailable: 'No motion data. Use Left / Right to steer.',
+    ready: screen === 'race' ? '' : 'Tilt ready. Left / Right still work.',
+  }[status]);
+  const start = $<HTMLButtonElement>('start');
+  const join = $<HTMLButtonElement>('join');
+  if (start) start.disabled = status === 'waiting';
+  if (join) join.disabled = joining || status === 'waiting';
 }
 
 function resetRace(me?: Driver) {
@@ -275,6 +318,11 @@ function resetRace(me?: Driver) {
   local = localRace?.kart ?? grid(me?.slot ?? 0, track);
   if (!localRace && me) {
     [local.s, local.lane, local.yaw, local.speed, local.drift, local.boost] = me.pose;
+  }
+  const key = `${code}/${room?.start}`;
+  if (localRace || key !== timingKey) {
+    timing = new RaceTiming(track.id);
+    timingKey = key;
   }
   sent = 0;
   starting = true;
@@ -294,30 +342,31 @@ function spectate() {
 
 function begin() {
   screen = 'race';
+  wake.setActive(true);
   resetRace(room!.drivers.find(d => d.id === player));
   music.start(track.id);
   show(`<div class="hud" aria-label="Race overview">
       <div class="hud-box"><small>Lap</small><em id="lap">1/3</em></div>
       <div class="hud-box"><small>Place</small><em id="place">1/${room!.drivers.length}</em></div>
       <div class="hud-box"><small>km/h</small><em id="speed">0</em></div>
+      <div class="hud-box race-clock"><small>Race time</small><em id="elapsed">0:00.00</em><small id="remaining">3:00 left</small></div>
       <canvas id="map" class="map" width="160" height="130" aria-label="${track.name} circuit map"></canvas>
     </div>
-    <div class="hud-actions"><button class="tool" id="tilt"${touch.touch ? '' : ' hidden'}>Enable tilt</button><button class="tool" id="sound"></button><button class="tool" id="music"></button><button class="tool" id="exit">Exit</button></div>
-    <div class="status" id="status" role="status"></div><div class="rotate">Turn sideways for a wider view</div>
+    <div class="hud-actions"><button class="tool" id="tilt"${touch.touch ? '' : ' hidden'}>Enable tilt</button><button class="tool" id="music"></button><button class="tool" id="sound"></button><button class="tool" id="exit">Exit</button></div>
+    <div class="status" id="status" role="status"></div>
+    ${touch.touch ? '<p class="race-tilt-status" id="tilt-status" role="status"></p>' : ''}
     <div class="boost" aria-label="Drift boost"><i id="boost"></i></div>
-    <div class="touch"${touch.touch ? '' : ' hidden'}><button id="left">Left</button><button id="right">Right</button><button id="brake">Brake / Drift</button></div>`);
+    <div class="touch"${touch.touch ? '' : ' hidden'}><button id="left">Left</button><button id="right">Right</button><button id="brake">Brake / Drift</button></div>
+    <dialog id="exit-dialog" aria-labelledby="exit-title">
+      <h2 id="exit-title">Exit race?</h2><p>You’ll leave this race and lose your result.</p>
+      <div class="actions"><button class="action alt" id="keep-racing" autofocus>Keep racing</button>${button('confirm-exit', 'Exit race')}</div>
+    </dialog>`);
   touch.bindTouch();
   touch.calibrate();
-  updateTilt();
+  bindTilt();
   const hudAction = (id: string, action: () => void) => doOn(id, () => {
     $(id).blur();
     action();
-  });
-  hudAction('tilt', () => {
-    void touch.enableTilt().then(allowed => {
-      if (!allowed && screen === 'race') $('tilt').textContent = 'Tilt unavailable';
-      else updateTilt();
-    });
   });
   const labelAudio = () => {
     $('sound').textContent = motor.muted ? 'Unmute FX' : 'Mute FX';
@@ -326,27 +375,35 @@ function begin() {
   hudAction('sound', () => { motor.toggle(); labelAudio(); });
   hudAction('music', () => { music.toggle(); labelAudio(); });
   labelAudio();
-  hudAction('exit', home);
-}
-
-function formatTime(ms: number) {
-  const s = Math.floor(ms / 1000);
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}.${String(Math.floor(ms % 1000 / 10)).padStart(2, '0')}`;
+  const dialog = $<HTMLDialogElement>('exit-dialog');
+  doOn('exit', () => dialog.showModal());
+  doOn('keep-racing', () => dialog.close());
+  doOn('confirm-exit', home);
 }
 
 function results() {
   music.stop();
+  const me = room?.drivers.find(d => d.id === player);
+  const finish = me?.finish ?? null;
+  if (screen === 'race' && finish !== null) motor.finish();
   screen = 'results';
+  wake.setActive(false);
   const racers = localRace?.racers;
   const rematch = !localRace && room?.host === player;
+  const splits = timing.splits(finish), records = timing.records(finish);
   show(`<section class="results" aria-labelledby="result-title"><div class="result-sheet"><p class="identity">Tilt Kart / ${track.name}</p>
     <h2 class="title" id="result-title">${racers === 1 ? 'Practice results' : 'Race results'}</h2>
+    ${me ? `<p class="finish-time"><small>Your result</small><strong>${finish === null ? 'DNF' : formatTime(finish)}</strong></p>
+    <dl class="splits" aria-label="Lap splits">${Array.from({ length: LAPS }, (_, i) =>
+      `<div><dt>Lap ${i + 1}</dt><dd>${formatTime(splits[i] ?? Infinity)}</dd></div>`).join('')}</dl>
+    <dl class="records" aria-label="Personal bests"><div><dt>Best lap</dt><dd>${formatTime(records.lap)}</dd></div>
+      <div><dt>Best time</dt><dd>${formatTime(records.race)}</dd></div></dl>` : ''}
     <ol class="list" id="results-list"></ol><p id="result-status"></p>
     <div class="actions">${button('back', 'Main menu', true)}${racers ? button('retry', 'Race again') : rematch ? button('retry', 'Rematch') : ''}</div>
     </div></section>`);
   updateResults();
   doOn('back', home);
-  if (racers) doOn('retry', () => startLocal(racers));
+  if (racers) doOn('retry', () => prepareLocal(racers, results));
   else if (rematch) doOn('retry', () => socket?.send('rematch'));
 }
 
@@ -362,7 +419,7 @@ function updateResults() {
 
 function set(id: string, value: string) {
   const el = $(id);
-  if (el.textContent !== value) el.textContent = value;
+  if (el && el.textContent !== value) el.textContent = value;
 }
 
 let last = performance.now();
@@ -373,15 +430,16 @@ function tick(now: number) {
   if (racing && room?.start != null) {
     const elapsed = Date.now() + clock - room.start;
     const me = room.drivers.find(d => d.id === player);
-    const active = screen === 'race' && elapsed >= 0 && local.s < LAPS;
+    const active = screen === 'race' && elapsed >= 0 && elapsed < LIMIT && local.s < LAPS;
     if (active && starting) { starting = false; touch.calibrate(); }
+    const before = local.s;
     if (localRace) {
       const changed = localRace.step(touch.input(), dt, elapsed);
-      if (screen === 'race' && (me?.finish != null || room.complete)) results();
-      else if (screen === 'results' && changed) updateResults();
+      if (screen === 'results' && changed) updateResults();
     } else if (active) {
-      drive(local, touch.input(), dt, track);
+      drive(local, touch.input(), Math.min(dt, elapsed / 1000), track);
     }
+    if (screen === 'race' && elapsed >= 0) timing.step(before, local.s, Math.min(elapsed, LIMIT), dt * 1000);
     const mine = pose(local);
     if (!localRace && !room.complete && elapsed >= LIMIT && checkedDeadline !== room.start && socket?.readyState === WebSocket.OPEN) {
       socket.send('status');
@@ -393,7 +451,7 @@ function tick(now: number) {
         socket.send(JSON.stringify(mine)); sent = now;
       }
     }
-    if (!localRace && me?.finish != null && screen === 'race') results();
+    if (screen === 'race' && (me?.finish != null || room.complete)) results();
     const visible = room.drivers.filter(d => d.online).map(d => {
       if (d.id === player) return { ...d, pose: mine };
       if (localRace) return d;
@@ -407,6 +465,8 @@ function tick(now: number) {
       set('lap', `${Math.min(LAPS, 1 + Math.max(0, Math.floor(mine[0])))}/${LAPS}`);
       set('speed', String(Math.round(local.speed * 3.6)));
       set('place', `${rank(current).findIndex(d => d.id === player) + 1}/${room.drivers.length}`);
+      set('elapsed', formatTime(clamp(elapsed, 0, LIMIT)));
+      set('remaining', `${formatTime(Math.ceil((LIMIT - clamp(elapsed, 0, LIMIT)) / 1000) * 1000).split('.')[0]} left`);
       set('status', elapsed < 0 ? String(Math.min(3, Math.ceil(-elapsed / 1000))) : elapsed < 630 ? 'GO!' : '');
       $('boost').style.transform = `scaleX(${local.boost > 0 ? clamp(local.boost / 1.5, 0, 1) : local.drift})`;
     }
@@ -416,8 +476,8 @@ function tick(now: number) {
     followed = target?.id ?? '';
     view.render(target?.pose ?? mine, visible, player, dt);
   } else {
-    const demo: Pose = [((now % 68_000) / 68_000 + .964) % 1, 1.5, -.07, 32, 0, 0];
-    view.render(demo, [{ ...preview, pose: demo }], preview.id, dt, true);
+    const demo: Pose = [.968 + .009 * Math.sin(now / 4200), 1.5, 0, 0, 0, 0];
+    view.render(demo, [], '', dt, true);
     motor.update();
   }
   requestAnimationFrame(tick);
