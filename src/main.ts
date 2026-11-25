@@ -250,7 +250,7 @@ function begin() {
       <div class="hud-box"><small>km/h</small><em id="speed">0</em></div>
       <canvas id="map" class="map" width="160" height="130" aria-label="Circuit map"></canvas>
     </div>
-    <div class="hud-actions"><button class="tool" id="tilt"${touch.touch ? '' : ' hidden'}>Enable tilt</button><button class="tool" id="sound" aria-label="Sound effects"></button><button class="tool" id="music" aria-label="Music"></button><button class="tool" id="exit">Exit</button></div>
+    <div class="hud-actions"><button class="tool" id="tilt"${touch.touch ? '' : ' hidden'}>Enable tilt</button><button class="tool" id="sound"></button><button class="tool" id="music"></button><button class="tool" id="exit">Exit</button></div>
     <div class="status" id="status" role="status"></div><div class="rotate">Turn sideways for a wider view</div>
     <div class="boost" aria-label="Drift boost"><i id="boost"></i></div>
     <div class="touch"${touch.touch ? '' : ' hidden'}><button id="left">Left</button><button id="right">Right</button><button id="brake">Brake / Drift</button></div>`);
@@ -268,10 +268,8 @@ function begin() {
     });
   });
   const labelAudio = () => {
-    $('sound').textContent = motor.muted ? 'FX off' : 'FX on';
-    $('sound').setAttribute('aria-pressed', String(!motor.muted));
-    $('music').textContent = music.muted ? 'Music off' : 'Music on';
-    $('music').setAttribute('aria-pressed', String(!music.muted));
+    $('sound').textContent = motor.muted ? 'Unmute FX' : 'Mute FX';
+    $('music').textContent = music.muted ? 'Unmute music' : 'Mute music';
   };
   hudAction('sound', () => { motor.toggle(); labelAudio(); });
   hudAction('music', () => { music.toggle(); labelAudio(); });
